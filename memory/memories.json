@@ -1,0 +1,15 @@
+{
+    "user": {
+        "name": "Mahesh"
+    },
+    "preferences": [
+        "Iron Man",
+        "Artificial Intelligence"
+    ],
+    "projects": [
+        "MARK XXX"
+    ],
+    "notes": [
+        "User wants a JARVIS-like assistant that behaves like a friend."
+    ]
+}

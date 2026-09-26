@@ -1,0 +1,22 @@
+{
+  "identity": {
+    "name": {
+      "value": "Tony Star"
+    }
+  },
+  "preferences": {
+    "favorite_character": {
+      "value": "Iron Man"
+    }
+  },
+  "projects": {
+    "main_project": {
+      "value": "MARK XXX"
+    }
+  },
+  "personality_profile": {
+    "style": {
+      "value": "JARVIS-like friend, loyal, intelligent, humorous"
+    }
+  }
+}
