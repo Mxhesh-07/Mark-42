@@ -1,0 +1,16 @@
+# Ignore Python cache and environment
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.dll
+
+# Ignore virtual environment
+mediapipe_env/
+venv/
+env/
+
+# Ignore OS files
+*.log
+*.tmp
+*.swp
