@@ -7,8 +7,35 @@ __pycache__/
 
 # Ignore virtual environment
 mediapipe_env/
+genai_env/
 venv/
 env/
+
+# Ignore secrets and credentials (never commit these)
+config/api_keys.json
+config/email_config.json
+config/alert_config.json
+config/spotify_config.json
+.spotify_cache
+.env
+*.pem
+
+# Ignore runtime data / user state
+business_data.json
+enterprise_data.json
+work_data.json
+life_data.json
+notifications.json
+alert_log.json
+voice_profiles.json
+companion_experiences.json
+companion_mood.json
+startup_data.json
+memory/long_term.json
+memory/memories.json
+config/hologram.pid
+config/hologram_cmd.json
+hologram_models/
 
 # Ignore OS files
 *.log
