@@ -89,7 +89,7 @@ def _parse_date(raw: str) -> str:
         "january": 1,  "february": 2,  "march": 3,     "april": 4,
         "may": 5,      "june": 6,      "july": 7,       "august": 8,
         "september": 9,"october": 10,  "november": 11,  "december": 12,
-        "january": 1,  "ocak": 1,      "şubat": 2,      "mart": 3,
+        "ocak": 1,     "şubat": 2,      "mart": 3,
         "nisan": 4,    "mayıs": 5,     "haziran": 6,    "temmuz": 7,
         "ağustos": 8,  "eylül": 9,     "ekim": 10,      "kasım": 11,
         "aralık": 12,
@@ -128,16 +128,18 @@ def _build_google_flights_url(
 
     base = "https://www.google.com/travel/flights"
 
+    options = f"&curr=TRY&passengers={passengers}&cabin={cabin_code}"
+
     if return_date:
         url = (
             f"{base}?q=Flights+from+{origin}+to+{destination}"
             f"+on+{date}+returning+{return_date}"
-            f"&curr=TRY"
+            f"{options}"
         )
     else:
         url = (
             f"{base}?q=Flights+from+{origin}+to+{destination}+on+{date}"
-            f"&curr=TRY"
+            f"{options}"
         )
 
     return url
@@ -249,9 +251,13 @@ def _format_spoken(
             f"{dur_str}, {stop_str}, {price_str}."
         )
 
+    def _price_value(flight: dict) -> int:
+        digits = re.sub(r"[^\d]", "", str(flight.get("price", "")))
+        return int(digits) if digits else 99999
+
     cheapest = min(
         (f for f in flights if f.get("price")),
-        key=lambda x: re.sub(r"[^\d]", "", str(x.get("price", "99999"))) or "99999",
+        key=_price_value,
         default=None,
     )
     if cheapest:

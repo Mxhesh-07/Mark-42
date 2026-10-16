@@ -79,11 +79,15 @@ def _get_camera_index() -> int:
 
     cfg = {}
     if API_CONFIG_PATH.exists():
-        with open(API_CONFIG_PATH, "r") as f:
-            cfg = json.load(f)
+        try:
+            with open(API_CONFIG_PATH, "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+        except Exception:
+            # Never overwrite a config we could not read (would wipe gemini_api_key)
+            return best_index
 
     cfg["camera_index"] = best_index
-    with open(API_CONFIG_PATH, "w") as f:
+    with open(API_CONFIG_PATH, "w", encoding="utf-8") as f:
         json.dump(cfg, f, indent=4)
 
     return best_index
@@ -138,7 +142,7 @@ class _LiveSession:
         self._player = player
         self._thread = threading.Thread(target=self._run_loop, daemon=True)
         self._thread.start()
-        self._ready.wait()
+        self._ready.wait(timeout=15)
 
     def _run_loop(self):
         self._loop = asyncio.new_event_loop()
@@ -160,10 +164,11 @@ class _LiveSession:
                     self._session = session
                     self._ready.set()
 
-                    async with asyncio.TaskGroup() as tg:
-                        tg.create_task(self._send_loop())
-                        tg.create_task(self._recv_loop())
-                        tg.create_task(self._play_loop())
+                    await asyncio.gather(
+                        self._send_loop(),
+                        self._recv_loop(),
+                        self._play_loop(),
+                    )
 
             except Exception as e:
                 print("Reconnect:", e)

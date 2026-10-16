@@ -6,6 +6,15 @@ from enum import Enum
 from typing import Callable, Any
 
 
+def _think(kind: str, text: str) -> None:
+    """Best-effort feed to the THINKING pane (the UI may not be loaded)."""
+    try:
+        from ui import jarvis_think
+        jarvis_think(kind, text)
+    except Exception:
+        pass
+
+
 class TaskStatus(Enum):
     PENDING    = "pending"
     RUNNING    = "running"
@@ -95,6 +104,7 @@ class TaskQueue:
             self._condition.notify()
 
         print(f"[TaskQueue] 📥 Task queued: [{task_id}] {goal[:60]}")
+        _think("sys", f"queued background task [{task_id}]: {goal[:60]}")
         return task_id
 
     def cancel(self, task_id: str) -> bool:
@@ -108,6 +118,11 @@ class TaskQueue:
 
             task.cancel_flag.set()
             task.status = TaskStatus.CANCELLED
+            try:
+                self._queue.remove(task)
+            except ValueError:
+                pass
+            self._condition.notify()
             print(f"[TaskQueue] 🚫 Task cancelled: [{task_id}]")
             return True
 
@@ -166,13 +181,19 @@ class TaskQueue:
     def _next_task(self) -> Task | None:
         if self._active_count >= self._max_concurrent:
             return None
+        # Purge any cancelled tasks that are still lingering in the queue
+        self._queue[:] = [
+            t for t in self._queue
+            if not (t.status == TaskStatus.CANCELLED or t.cancel_flag.is_set())
+        ]
         for task in self._queue:
-            if task.status == TaskStatus.PENDING and not task.cancel_flag.is_set():
+            if task.status == TaskStatus.PENDING:
                 return task
         return None
 
     def _run_task(self, task: Task) -> None:
         print(f"[TaskQueue] ▶️ Running: [{task.task_id}] {task.goal[:60]}")
+        _think("tool", f"[{task.task_id}] {task.goal[:60]}")
         try:
             executor = self._get_executor()
             result   = executor.execute(
@@ -196,6 +217,7 @@ class TaskQueue:
                     print(f"[TaskQueue] ⚠️ on_complete callback error: {e}")
 
             print(f"[TaskQueue] ✅ Completed: [{task.task_id}]")
+            _think("result", f"[{task.task_id}] task completed")
 
         except Exception as e:
             with self._lock:
@@ -203,6 +225,7 @@ class TaskQueue:
                 task.error  = str(e)
                 self._active_count -= 1
             print(f"[TaskQueue] ❌ Failed: [{task.task_id}] {e}")
+            _think("err", f"[{task.task_id}] task failed: {e}")
 
         with self._condition:
             self._condition.notify()

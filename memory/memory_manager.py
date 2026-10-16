@@ -1,5 +1,5 @@
 import json
-from threading import Lock
+from threading import RLock
 from pathlib import Path
 import sys
 
@@ -14,7 +14,7 @@ def get_base_dir() -> Path:
 
 BASE_DIR    = get_base_dir()
 MEMORY_PATH = BASE_DIR / "memory" / "long_term.json"
-_lock       = Lock()
+_lock       = RLock()
 
 MAX_VALUE_LENGTH = 300  
 
@@ -97,11 +97,15 @@ def update_memory(memory_update: dict) -> dict:
     if not isinstance(memory_update, dict) or not memory_update:
         return load_memory()
 
-    memory = load_memory()
+    # Hold the lock across the whole read-modify-write so concurrent
+    # background updates can't clobber each other. _lock is re-entrant,
+    # so the nested load_memory()/save_memory() calls are safe.
+    with _lock:
+        memory = load_memory()
 
-    if _recursive_update(memory, memory_update):
-        save_memory(memory)
-        print(f"[Memory] 💾 Saved: {list(memory_update.keys())}")
+        if _recursive_update(memory, memory_update):
+            save_memory(memory)
+            print(f"[Memory] 💾 Saved: {list(memory_update.keys())}")
 
     return memory
 
@@ -113,57 +117,71 @@ def format_memory_for_prompt(memory: dict | None) -> str:
 
     lines = []
 
+    def _val(entry):
+        # Entries are usually {"value": ...} but may be raw scalars.
+        if isinstance(entry, dict):
+            return entry.get("value")
+        return entry
+
     # Identity
     identity = memory.get("identity", {})
-    name = identity.get("name", {}).get("value")
-    age  = identity.get("age",  {}).get("value")
-    bday = identity.get("birthday", {}).get("value")
-    city = identity.get("city", {}).get("value")
+    if isinstance(identity, dict):
+        name = _val(identity.get("name"))
+        age  = _val(identity.get("age"))
+        bday = _val(identity.get("birthday"))
+        city = _val(identity.get("city"))
+    else:
+        name = age = bday = city = None
     if name: lines.append(f"Name: {name}")
     if age:  lines.append(f"Age: {age}")
     if bday: lines.append(f"Birthday: {bday}")
     if city: lines.append(f"City: {city}")
 
     prefs = memory.get("preferences", {})
-    for i, (key, entry) in enumerate(prefs.items()):
-        if i >= 5:
-            break
-        val = entry.get("value") if isinstance(entry, dict) else entry
-        if val:
-            lines.append(f"{key.replace('_', ' ').title()}: {val}")
+    if isinstance(prefs, dict):
+        for i, (key, entry) in enumerate(prefs.items()):
+            if i >= 5:
+                break
+            val = _val(entry)
+            if val:
+                lines.append(f"{key.replace('_', ' ').title()}: {val}")
 
     rels = memory.get("relationships", {})
-    for i, (key, entry) in enumerate(rels.items()):
-        if i >= 5:
-            break
-        val = entry.get("value") if isinstance(entry, dict) else entry
-        if val:
-            lines.append(f"{key.title()}: {val}")
+    if isinstance(rels, dict):
+        for i, (key, entry) in enumerate(rels.items()):
+            if i >= 5:
+                break
+            val = _val(entry)
+            if val:
+                lines.append(f"{key.title()}: {val}")
 
     notes = memory.get("notes", {})
-    for i, (key, entry) in enumerate(notes.items()):
-        if i >= 5:
-            break
-        val = entry.get("value") if isinstance(entry, dict) else entry
-        if val:
-            lines.append(f"{key}: {val}")
+    if isinstance(notes, dict):
+        for i, (key, entry) in enumerate(notes.items()):
+            if i >= 5:
+                break
+            val = _val(entry)
+            if val:
+                lines.append(f"{key}: {val}")
+
+    # Projects
+    projects = memory.get("projects", {})
+    if isinstance(projects, dict):
+        for key, entry in projects.items():
+            val = _val(entry)
+            if val:
+                lines.append(f"Project: {val}")
+
+    # Personality
+    personality = memory.get("personality_profile", {})
+    if isinstance(personality, dict):
+        for key, entry in personality.items():
+            val = _val(entry)
+            if val:
+                lines.append(f"Assistant Style: {val}")
 
     if not lines:
         return ""
-    
-   # Projects
-    projects = memory.get("projects", {})
-    for key, entry in projects.items():
-        val = entry.get("value") if isinstance(entry, dict) else entry
-        if val:
-            lines.append(f"Project: {val}")
-
-# Personality
-    personality = memory.get("personality_profile", {})
-    for key, entry in personality.items():
-        val = entry.get("value") if isinstance(entry, dict) else entry
-        if val:
-            lines.append(f"Assistant Style: {val}")
 
     result = "[USER MEMORY]\n" + "\n".join(f"- {l}" for l in lines)
     if len(result) > 800:

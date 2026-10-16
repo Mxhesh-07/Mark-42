@@ -3,6 +3,7 @@
 # Uses visual element detection (pyautogui + screen search) instead of
 # hardcoded tab/click sequences — works on any screen resolution.
 
+import re
 import time
 import pyautogui
 from pathlib import Path
@@ -196,13 +197,16 @@ def send_message(
     if player:
         player.write_log(f"[msg] Sending to {receiver} via {platform}...")
 
-    if "whatsapp" in platform or "wp" in platform or "wapp" in platform:
+    def _matches(*aliases: str) -> bool:
+        return any(re.search(rf"\b{re.escape(a)}\b", platform) for a in aliases)
+
+    if _matches("whatsapp", "wp", "wapp"):
         result = _send_whatsapp(receiver, message_text)
 
-    elif "instagram" in platform or "ig" in platform or "insta" in platform:
+    elif _matches("instagram", "ig", "insta"):
         result = _send_instagram(receiver, message_text)
 
-    elif "telegram" in platform or "tg" in platform:
+    elif _matches("telegram", "tg"):
         result = _send_telegram(receiver, message_text)
 
     else:

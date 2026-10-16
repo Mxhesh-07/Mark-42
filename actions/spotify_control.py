@@ -1,27 +1,67 @@
+import json
+import os
+import sys
 import time
+from pathlib import Path
+
 import spotipy
 from spotipy.oauth2 import SpotifyOAuth
 
 # ================= CONFIG =================
-CLIENT_ID = "0533af6d0b074f7789cf54079b8d9d29"
-CLIENT_SECRET = "8f320a5c9be149fbb22a8ec57235da76"
-REDIRECT_URI = "http://localhost:8888/callback"
+SCOPE          = "user-read-playback-state user-modify-playback-state"
+DEFAULT_REDIRECT_URI = "http://localhost:8888/callback"
 
-SCOPE = "user-read-playback-state user-modify-playback-state"
+
+def get_base_dir() -> Path:
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).parent
+    return Path(__file__).resolve().parent.parent
+
+
+BASE_DIR       = get_base_dir()
+SPOTIFY_CONFIG = BASE_DIR / "config" / "spotify_config.json"
 
 # ================= AUTH =================
-sp = spotipy.Spotify(auth_manager=SpotifyOAuth(
-    client_id=CLIENT_ID,
-    client_secret=CLIENT_SECRET,
-    redirect_uri=REDIRECT_URI,
-    scope=SCOPE,
-    open_browser=True
-))
+sp = None  # Spotify client is created lazily so importing has no side effects
+
+
+def _load_credentials() -> tuple:
+    """Reads credentials from config/spotify_config.json with env fallbacks."""
+    client_id     = os.getenv("SPOTIFY_CLIENT_ID", "")
+    client_secret = os.getenv("SPOTIFY_CLIENT_SECRET", "")
+    redirect_uri  = DEFAULT_REDIRECT_URI
+
+    try:
+        if SPOTIFY_CONFIG.exists():
+            with open(SPOTIFY_CONFIG, "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+            client_id     = client_id or cfg.get("client_id", "")
+            client_secret = client_secret or cfg.get("client_secret", "")
+            redirect_uri  = cfg.get("redirect_uri", redirect_uri)
+    except Exception as e:
+        print(f"[Spotify] ⚠️ Could not read config: {e}")
+
+    return client_id, client_secret, redirect_uri
+
+
+def _get_client() -> spotipy.Spotify:
+    """Creates the Spotify client on first use (never at import time)."""
+    global sp
+    if sp is None:
+        client_id, client_secret, redirect_uri = _load_credentials()
+        sp = spotipy.Spotify(auth_manager=SpotifyOAuth(
+            client_id=client_id,
+            client_secret=client_secret,
+            redirect_uri=redirect_uri,
+            scope=SCOPE,
+            open_browser=True
+        ))
+    return sp
 
 
 # ================= DEVICE =================
 def get_active_device():
-    devices = sp.devices()["devices"]
+    devices = _get_client().devices()["devices"]
 
     if not devices:
         return None
@@ -56,7 +96,7 @@ def play_song(query: str):
         return "No song provided."
 
     try:
-        results = sp.search(q=query, type="track", limit=1)
+        results = _get_client().search(q=query, type="track", limit=1)
 
         if not results["tracks"]["items"]:
             return f"Could not find {query}"
@@ -70,7 +110,7 @@ def play_song(query: str):
         if not device_id:
             return "Open Spotify and play something once."
 
-        sp.start_playback(device_id=device_id, uris=[uri])
+        _get_client().start_playback(device_id=device_id, uris=[uri])
 
         return f"Playing {name} by {artist}"
 
@@ -80,7 +120,7 @@ def play_song(query: str):
 
 def pause_music():
     try:
-        sp.pause_playback()
+        _get_client().pause_playback()
         return "Music paused."
     except:
         return "Could not pause."
@@ -92,7 +132,7 @@ def resume_music():
         if not device_id:
             return "No active device."
 
-        sp.start_playback(device_id=device_id)
+        _get_client().start_playback(device_id=device_id)
         return "Resuming music."
     except:
         return "Could not resume."
@@ -100,7 +140,7 @@ def resume_music():
 
 def next_track():
     try:
-        sp.next_track()
+        _get_client().next_track()
         return "Next track."
     except:
         return "Could not skip."
@@ -108,7 +148,7 @@ def next_track():
 
 def previous_track():
     try:
-        sp.previous_track()
+        _get_client().previous_track()
         return "Previous track."
     except:
         return "Could not go back."
@@ -117,7 +157,7 @@ def previous_track():
 def set_volume(value: int):
     try:
         value = max(0, min(100, int(value)))
-        sp.volume(value)
+        _get_client().volume(value)
         return f"Volume set to {value}%"
     except:
         return "Could not change volume."
@@ -136,11 +176,11 @@ def smart_play(query: str):
         if not device_id:
             return "No active device."
 
-        results = sp.search(q=query, type="playlist,track", limit=1)
+        results = _get_client().search(q=query, type="playlist,track", limit=1)
 
         if results["playlists"]["items"]:
             playlist_uri = results["playlists"]["items"][0]["uri"]
-            sp.start_playback(device_id=device_id, context_uri=playlist_uri)
+            _get_client().start_playback(device_id=device_id, context_uri=playlist_uri)
             return f"Playing playlist for {query}"
 
         return play_song(query)

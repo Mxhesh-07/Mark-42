@@ -183,6 +183,9 @@ class _BrowserThread:
         return self._page
 
     async def _launch(self):
+        if self._playwright is None:
+            self._playwright = await async_playwright().start()
+
         prog_id                        = _get_default_browser_id()
         engine_name, exe_path, channel = _find_browser_executable(prog_id)
         engine                         = getattr(self._playwright, engine_name)
@@ -223,13 +226,21 @@ class _BrowserThread:
         self._page = await self._context.new_page()
 
     async def _close(self):
+        global _bt_started
+
         if self._browser:
             await self._browser.close()
-            self._browser = None
-            self._page    = None
+
+        self._browser = None
+        self._context = None
+        self._page    = None
+
         if self._playwright:
             await self._playwright.stop()
             self._playwright = None
+
+        # Allow _ensure_started() to relaunch on the next request
+        _bt_started = False
 
     async def _go_to(self, url: str) -> str:
         if not url.startswith("http"):
@@ -237,19 +248,25 @@ class _BrowserThread:
         page = await self._get_page()
         try:
             await page.goto(url, wait_until="domcontentloaded", timeout=15000)
+            try:
+                await page.bring_to_front()
+            except Exception:
+                pass
             return f"Opened: {page.url}"
         except PlaywrightTimeout:
             return f"Timeout loading: {url}"
         except Exception as e:
             return f"Navigation error: {e}"
 
-    async def _search(self, query: str, engine: str = "google") -> str:
+    async def _search(self, query: str, engine: str = "duckduckgo") -> str:
         engines = {
             "google":     f"https://www.google.com/search?q={query.replace(' ', '+')}",
             "bing":       f"https://www.bing.com/search?q={query.replace(' ', '+')}",
             "duckduckgo": f"https://duckduckgo.com/?q={query.replace(' ', '+')}",
         }
-        url = engines.get(engine.lower(), engines["google"])
+        # Default to DuckDuckGo: Google shows an automation CAPTCHA
+        # (google.com/sorry) for Playwright-driven searches.
+        url = engines.get(engine.lower(), engines["duckduckgo"])
         return await self._go_to(url)
 
     async def _click(self, selector=None, text=None) -> str:
@@ -396,7 +413,7 @@ def browser_control(
                       smart_click | smart_type | get_text | press | close
         url         : URL for go_to
         query       : search query
-        engine      : google | bing | duckduckgo (default: google)
+        engine      : duckduckgo | google | bing (default: duckduckgo)
         selector    : CSS selector for click/type
         text        : text to click or type
         description : element description for smart_click/smart_type
@@ -418,7 +435,7 @@ def browser_control(
         elif action == "search":
             result = _bt.run(_bt._search(
                 parameters.get("query", ""),
-                parameters.get("engine", "google")
+                parameters.get("engine", "duckduckgo")
             ))
 
         elif action == "click":

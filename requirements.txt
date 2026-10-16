@@ -15,5 +15,20 @@ send2trash
 comtypes
 pycaw
 win10toast
+# win10toast imports pkg_resources, which setuptools>=81 removed.
+# Keep setuptools below 81 or Windows toast notifications break.
+setuptools<81
 duckduckgo-search
 youtube-transcript-api
+speechbrain
+torch
+yfinance
+pytesseract
+pygame
+PyOpenGL
+PyOpenGL-accelerate
+spotipy
+SpeechRecognition
+pyttsx3
+keyboard
+ddgs

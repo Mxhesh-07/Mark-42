@@ -1,4 +1,5 @@
 import os, json, time, math, random, threading
+import queue
 import tkinter as tk
 from collections import deque
 from PIL import Image, ImageTk, ImageDraw
@@ -34,8 +35,33 @@ C_GREEN  = "#00ff88"
 C_RED    = "#ff3333"
 
 
+_ACTIVE_UI = None
+THINK_MAX_LINES = 800
+
+
+def jarvis_think(kind: str, text: str) -> None:
+    """Global, thread-safe hook that routes an event to the THINKING pane.
+
+    Safe to call from any thread, and from modules that must not import the
+    UI directly (agents, monitors). Silently does nothing if the UI is not up.
+    """
+    ui = _ACTIVE_UI
+    if ui is not None:
+        try:
+            ui.jarvis_think(kind, text)
+        except Exception:
+            pass
+
+
 class JarvisUI:
     def __init__(self, face_path, size=None):
+        global _ACTIVE_UI
+        _ACTIVE_UI = self
+        # Producer threads only touch this queue; the Tk thread drains it.
+        # (Calling root.after() from a worker thread can block forever if
+        # no event loop is running, so never do that.)
+        self._think_q = queue.Queue()
+
         self.root = tk.Tk()
         self.root.title("J.A.R.V.I.S — MARK XXX")
         self.root.resizable(False, False)
@@ -68,6 +94,7 @@ class JarvisUI:
         self.pulse_r      = [0.0, self.FACE_SZ * 0.26, self.FACE_SZ * 0.52]
         self.status_text  = "INITIALISING"
         self.status_blink = True
+        self._stream_buf  = ""
 
         self.typing_queue = deque()
         self.is_typing    = False
@@ -88,12 +115,18 @@ class JarvisUI:
         self.bg.place(x=0, y=0)
         self.create_dashboard_panels()
 
-        LW = int(W * 0.72)
-        LH = 138
+        LW     = int(W * 0.72)
+        LH     = 138
+        GAP    = 10
+        LOG_W  = int(LW * 0.52)
+        THINK_W = LW - LOG_W - GAP
+        LX     = (W - LW) // 2
+        LY     = H - LH - 36
+
         self.log_frame = tk.Frame(self.root, bg=C_PANEL,
                                   highlightbackground=C_MID,
                                   highlightthickness=1)
-        self.log_frame.place(x=(W - LW) // 2, y=H - LH - 36, width=LW, height=LH)
+        self.log_frame.place(x=LX, y=LY, width=LOG_W, height=LH)
         self.log_text = tk.Text(self.log_frame, fg=C_TEXT, bg=C_PANEL,
                                 insertbackground=C_TEXT, borderwidth=0,
                                 wrap="word", font=("Courier", 10), padx=10, pady=6)
@@ -102,6 +135,43 @@ class JarvisUI:
         self.log_text.tag_config("you", foreground="#e8e8e8")
         self.log_text.tag_config("ai",  foreground=C_PRI)
         self.log_text.tag_config("sys", foreground=C_ACC2)
+
+        # ---- THINKING pane: steps by default, raw detail on demand ----
+        self.think_raw = False
+        self.think_frame = tk.Frame(self.root, bg=C_PANEL,
+                                    highlightbackground=C_MID,
+                                    highlightthickness=1)
+        self.think_frame.place(x=LX + LOG_W + GAP, y=LY,
+                               width=THINK_W, height=LH)
+
+        hdr = tk.Frame(self.think_frame, bg="#00080d", height=24)
+        hdr.pack(fill="x")
+        hdr.pack_propagate(False)
+        tk.Label(hdr, text="◈ THINKING", fg=C_PRI, bg="#00080d",
+                 font=("Courier", 10, "bold")).pack(side="left", padx=(9, 0))
+        tk.Button(hdr, text="⌫", command=self._clear_thinking, fg=C_MID,
+                  bg="#00080d", activebackground="#003344", font=("Courier", 9),
+                  bd=0, relief="flat", padx=7, cursor="hand2"
+                  ).pack(side="right", padx=(0, 5))
+        self.think_mode_btn = tk.Button(
+            hdr, text="STEPS", command=self._toggle_think_mode,
+            fg=C_ACC2, bg="#00080d", activebackground="#003344",
+            font=("Courier", 8, "bold"), bd=0, relief="flat", padx=7, cursor="hand2"
+        )
+        self.think_mode_btn.pack(side="right", padx=5)
+
+        self.think_text = tk.Text(self.think_frame, fg=C_TEXT, bg=C_PANEL,
+                                  insertbackground=C_TEXT, borderwidth=0,
+                                  wrap="word", font=("Courier", 9), padx=9, pady=4)
+        self.think_text.pack(fill="both", expand=True)
+        self.think_text.configure(state="disabled")
+        self.think_text.tag_config("in",   foreground="#e8e8e8")
+        self.think_text.tag_config("tool", foreground=C_PRI)
+        self.think_text.tag_config("out",  foreground=C_TEXT)
+        self.think_text.tag_config("err",  foreground=C_RED)
+        self.think_text.tag_config("sys",  foreground=C_ACC2)
+        self.think_text.tag_config("raw",  foreground="#2f5f70", elide=True)
+        self._poll_think()
 
         self._api_key_ready = self._api_keys_exist()
         if not self._api_key_ready:
@@ -449,18 +519,6 @@ class JarvisUI:
         panel_bg = "#05141c"
 
         self.task_frame = tk.Frame(
-                self.root,
-                bg=panel_bg,
-                highlightbackground=C_MID,
-                highlightthickness=1
-            )
-
-        self.task_frame.config(
-                highlightbackground="#00d4ff",
-                highlightthickness=2
-            )
-
-        self.task_frame = tk.Frame(
             self.root,
             bg=panel_bg,
             highlightbackground="#00d4ff",
@@ -489,13 +547,6 @@ class JarvisUI:
             font=("Courier", 9)
         )
         self.task_label.pack(anchor="w", padx=10)
-        self.memory_frame = tk.Frame(
-                self.root,
-                bg=panel_bg,
-                highlightbackground=C_MID,
-                highlightthickness=1
-            )
-
         self.memory_frame = tk.Frame(
                 self.root,
                 bg=panel_bg,
@@ -686,5 +737,114 @@ class JarvisUI:
 
         if name in self.agent_states:
             self.agent_states[name] = state
+
+    def stream_jarvis_text(self, text: str):
+        """Called as each text chunk arrives from Gemini."""
+        self.root.after(0, self._append_jarvis_text, text)
+
+    def _append_jarvis_text(self, text: str):
+        # status_text doubles as the status enum (ONLINE/PROCESSING/
+        # SPEAKING), so only accumulate while we're already previewing a
+        # reply — otherwise start a fresh buffer. Cap it so a long reply
+        # can't grow without bound.
+        if not self.status_text.startswith("Jarvis: "):
+            self._stream_buf = ""
+        self._stream_buf += text
+        self.status_text = "Jarvis: " + self._stream_buf[-100:]
+
+    # ================= THINKING PANE =================
+
+    @staticmethod
+    def _clip(text, limit: int) -> str:
+        s = " ".join(str(text).split())
+        return s if len(s) <= limit else s[: limit - 1] + "…"
+
+    def jarvis_think(self, kind: str, text: str):
+        """Thread-safe: queue an event for the THINKING pane.
+
+        kind: "tool" | "args" | "result" | "err" | "in" | "sys"
+        Safe to call from any thread — this never touches Tk directly.
+        """
+        try:
+            self._think_q.put((kind, str(text)))
+        except Exception:
+            pass
+
+    def _poll_think(self):
+        """Tk-thread drain of the thinking queue (runs on the event loop)."""
+        try:
+            while True:
+                try:
+                    kind, text = self._think_q.get_nowait()
+                except queue.Empty:
+                    break
+                try:
+                    self._think_event(kind, text)
+                except Exception:
+                    pass
+        finally:
+            try:
+                self.root.after(40, self._poll_think)
+            except Exception:
+                pass
+
+    def _think_event(self, kind, text):
+        try:
+            one = " ".join(str(text).split())
+            ts  = time.strftime("%H:%M:%S")
+            if kind == "tool":
+                self._think_insert("tool", f"[{ts}] ▸ {self._clip(one, 170)}")
+            elif kind == "args":
+                # raw detail — hidden while the pane is in STEPS mode
+                self._think_insert("raw", f"        {self._clip(one, 500)}")
+            elif kind == "in":
+                self._think_insert("in", f"[{ts}] ✦ {self._clip(one, 170)}")
+            elif kind == "result":
+                self._think_insert("out", f"[{ts}] → {self._clip(one, 130)}")
+                if len(one) > 130:
+                    self._think_insert("raw", f"        {self._clip(one, 4000)}")
+            elif kind == "err":
+                self._think_insert("err", f"[{ts}] ✕ {self._clip(one, 250)}")
+                if len(one) > 250:
+                    self._think_insert("raw", f"        {self._clip(one, 4000)}")
+            else:
+                self._think_insert("sys", f"[{ts}] {self._clip(one, 170)}")
+        except Exception:
+            pass
+
+    def _think_insert(self, tag: str, line: str):
+        w = self.think_text
+        try:
+            at_end = w.yview()[1] >= 0.999   # only follow the tail if we were there
+        except Exception:
+            at_end = True
+
+        w.configure(state="normal")
+        w.insert(tk.END, line + "\n", tag)
+        try:
+            total = int(w.index("end-1c").split(".")[0])
+            if total > THINK_MAX_LINES:
+                w.delete("1.0", f"{total - THINK_MAX_LINES + 1}.0")
+        except Exception:
+            pass
+        w.configure(state="disabled")
+        if at_end:
+            w.see(tk.END)
+
+    def _toggle_think_mode(self):
+        """Switch between STEPS (clean) and RAW (everything) detail."""
+        self.think_raw = not self.think_raw
+        self.think_text.tag_config("raw", elide=not self.think_raw)
+        self.think_mode_btn.config(
+            text="RAW" if self.think_raw else "STEPS",
+            fg=C_ACC if self.think_raw else C_ACC2
+        )
+
+    def _clear_thinking(self):
+        w = self.think_text
+        w.configure(state="normal")
+        w.delete("1.0", tk.END)
+        w.configure(state="disabled")
+        self._think_insert("sys", f"[{time.strftime('%H:%M:%S')}] ◌  cleared")
 
     

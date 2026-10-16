@@ -22,9 +22,54 @@ BASE_DIR        = get_base_dir()
 API_CONFIG_PATH = BASE_DIR / "config" / "api_keys.json"
 
 
+def _think(kind: str, text: str) -> None:
+    """Best-effort feed to the THINKING pane (the UI may not be loaded)."""
+    try:
+        from ui import jarvis_think
+        jarvis_think(kind, text)
+    except Exception:
+        pass
+
+
 def _get_api_key() -> str:
     with open(API_CONFIG_PATH, "r", encoding="utf-8") as f:
         return json.load(f)["gemini_api_key"]
+
+
+# Tool results that actually mean "this did not work" — a model refusal or a
+# hard error returned as a string. Without this the executor marked refusals
+# as "✅ done" and reported success.
+_REFUSAL_MARKERS = (
+    "i am sorry, but i cannot", "i'm sorry, but i cannot",
+    "i am sorry, but i can't", "i'm sorry, but i can't",
+    "i cannot directly", "i can't directly",
+    "i cannot control", "i can't control",
+    "i cannot interact", "i can't interact",
+    "i am unable to", "i'm unable to",
+    "i do not have the ability", "i don't have the ability",
+    "as an ai", "as a language model",
+    "i don't have access to", "i do not have access to",
+)
+_ERROR_MARKERS = (
+    "navigation error:", "timeout loading:", "browser error:",
+    "click error:", "type error:", "scroll error:", "key error:",
+    "could not find:", "could not get", "unknown action:",
+    "failed to open", "couldn't confirm it launched",
+    "search failed", "web search failed",
+)
+
+
+def _looks_like_failure(result) -> bool:
+    """True when a tool's returned text is really a refusal or an error."""
+    if result is None:
+        return True
+    text = str(result).strip()
+    if not text:
+        return True
+    low = text.lower()
+    return any(m in low for m in _REFUSAL_MARKERS) or any(
+        m in low for m in _ERROR_MARKERS
+    )
 
 def _run_generated_code(description: str, speak: Callable | None = None) -> str:
     import google.generativeai as genai
@@ -70,24 +115,27 @@ def _run_generated_code(description: str, speak: Callable | None = None) -> str:
         code = response.text.strip()
         code = re.sub(r"```(?:python)?", "", code).strip().rstrip("`").strip()
 
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".py", delete=False, encoding="utf-8"
-        ) as f:
-            f.write(code)
-            tmp_path = f.name
-
-        print(f"[Executor] 🐍 Running generated code: {tmp_path}")
-
-        result = subprocess.run(
-            [sys.executable, tmp_path],
-            capture_output=True, text=True,
-            timeout=120, cwd=str(Path.home())
-        )
-
+        tmp_path = None
         try:
-            os.unlink(tmp_path)
-        except Exception:
-            pass
+            with tempfile.NamedTemporaryFile(
+                mode="w", suffix=".py", delete=False, encoding="utf-8"
+            ) as f:
+                f.write(code)
+                tmp_path = f.name
+
+            print(f"[Executor] 🐍 Running generated code: {tmp_path}")
+
+            result = subprocess.run(
+                [sys.executable, tmp_path],
+                capture_output=True, text=True,
+                timeout=120, cwd=str(Path.home())
+            )
+        finally:
+            if tmp_path:
+                try:
+                    os.unlink(tmp_path)
+                except Exception:
+                    pass
 
         output = result.stdout.strip()
         error  = result.stderr.strip()
@@ -98,7 +146,9 @@ def _run_generated_code(description: str, speak: Callable | None = None) -> str:
             return "Task completed successfully."
         elif error:
             raise RuntimeError(f"Code error: {error[:400]}")
-        return "Completed."
+        raise RuntimeError(
+            f"Code error: process exited with code {result.returncode}."
+        )
 
     except subprocess.TimeoutExpired:
         raise RuntimeError("Generated code timed out after 120 seconds.")
@@ -118,7 +168,7 @@ def _inject_context(params: dict, tool: str, step_results: dict, goal: str = "")
         if not content or len(content) < 50:
             all_results = [
                 v for v in step_results.values()
-                if v and len(v) > 100 and v not in ("Done.", "Completed.")
+                if isinstance(v, str) and len(v) > 100 and v not in ("Done.", "Completed.")
             ]
             if all_results:
                 combined = "\n\n---\n\n".join(all_results)
@@ -259,6 +309,7 @@ class AgentExecutor:
         cancel_flag: threading.Event | None = None,
     ) -> str:
         print(f"\n[Executor] 🎯 Goal: {goal}")
+        _think("sys", f"goal: {goal}")
 
         replan_attempts = 0
         completed_steps = []
@@ -290,6 +341,9 @@ class AgentExecutor:
                 params = _inject_context(params, tool, step_results, goal=goal)
 
                 print(f"\n[Executor] ▶️ Step {step_num}: [{tool}] {desc}")
+                _think("tool", f"step {step_num} [{tool}] {desc}")
+                if params:
+                    _think("args", json.dumps(params, ensure_ascii=False, default=str))
 
                 attempt = 1
                 step_ok = False
@@ -299,15 +353,22 @@ class AgentExecutor:
                         break
                     try:
                         result = _call_tool(tool, params, speak)
+                        if _looks_like_failure(result):
+                            raise RuntimeError(
+                                f"Tool '{tool}' returned no usable result: "
+                                f"{str(result)[:200]}"
+                            )
                         step_results[step_num] = result 
                         completed_steps.append(step)
                         print(f"[Executor] ✅ Step {step_num} done: {str(result)[:100]}")
+                        _think("result", f"step {step_num}: {str(result)[:130]}")
                         step_ok = True
                         break
 
                     except Exception as e:
                         error_msg = str(e)
                         print(f"[Executor] ❌ Step {step_num} attempt {attempt} failed: {error_msg}")
+                        _think("err", f"step {step_num} attempt {attempt} failed: {error_msg}")
 
                         recovery = analyze_error(step, error_msg, attempt=attempt)
                         decision = recovery["decision"]

@@ -3,10 +3,19 @@ import pyttsx3
 import os
 import time
 
-engine = pyttsx3.init()
+_engine = None
+
+
+def _get_engine():
+    global _engine
+    if _engine is None:
+        _engine = pyttsx3.init()
+    return _engine
+
 
 def speak(text):
     print(text)
+    engine = _get_engine()
     engine.say(text)
     engine.runAndWait()
 
@@ -35,14 +44,19 @@ def listen():
     except:
         return ""
 
-while True:
-    command = listen()
+def main():
+    while True:
+        command = listen()
 
-    if command.startswith("call "):
-        name = command.replace("call ", "").strip()
+        if command.startswith("call "):
+            name = command.replace("call ", "").strip()
 
-        if name in contacts:
-            speak(f"Calling {name}")
-            call_number(contacts[name])
-        else:
-            speak("Contact not found")
+            if name in contacts:
+                speak(f"Calling {name}")
+                call_number(contacts[name])
+            else:
+                speak("Contact not found")
+
+
+if __name__ == "__main__":
+    main()

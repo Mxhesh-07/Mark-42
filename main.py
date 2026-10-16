@@ -10,7 +10,23 @@ from pathlib import Path
 import pyaudio
 from google import genai
 from google.genai import types
-import time 
+import time
+
+# --- quota resilience ---------------------------------------------------------
+# Each model has its own free-tier daily bucket, and the project's old default
+# (gemini-2.5-flash-lite) is capped at ~20 requests/day — after that, memory
+# updates and the natural-language command parsers fail silently. This patches
+# both Gemini SDKs so every generate_content call falls back to another model
+# when one is exhausted (429) or the server is busy (503). If the whole Gemini
+# chain is down and the request is plain text, it can fall over to the free
+# OpenAI-compatible providers in config/providers.json (tier-2). Must run before
+# the first request, so it goes here, ahead of the project imports below.
+try:
+    from gemini_util import install_quota_fallback as _install_quota_fallback
+    _install_quota_fallback()
+except Exception as _quota_err:  # never block startup
+    print(f"[Quota] fallback not installed: {_quota_err}")
+
 from ui import JarvisUI
 from memory.memory_manager import load_memory, update_memory, format_memory_for_prompt
 
@@ -34,10 +50,27 @@ from actions.web_search       import web_search as web_search_action
 from actions.computer_control import computer_control
 from actions.spotify_control  import spotify_control
 
+try:
+    from system_state import describe_state as _describe_state
+except Exception:  # keep the app bootable if the module is missing
+    def _describe_state(*_a, **_k):  # type: ignore
+        return ""
+
 from memory.memory_extractor import extract_memory
 from memory.memory_manager import update_memory
 
 from memory import AIMemory
+from voice_id import identify_speaker, register_speaker, list_speakers, assign_name_to_unknown, is_available as voice_id_available
+from companion import check_in, detect_emotion, respond_with_emotion, personal_joke, remember_experience, get_recent_experiences, companion_response
+from work_assistant import add_task, complete_task, get_pending_tasks, save_meeting_notes, draft_email as wa_draft_email, get_email_drafts as wa_get_email_drafts, save_code_snippet, get_code_snippets, save_document, get_documents, daily_briefing, weekly_summary
+from startup_partner import set_startup_info, log_metric, get_metric_trend, add_milestone, complete_milestone, get_milestones, save_pitch_draft, log_partner_message, get_partner_messages, add_competitor, get_competitors, add_product_feature, get_product_features, add_team_member, get_team, log_investor_update, get_investor_updates, startup_dashboard, strategy_prompt
+from notifications import start_monitoring, stop_monitoring, briefing, get_all_notifications, mark_all_read, mark_as_read
+from smart_alerts import start_monitoring as start_alert_monitoring, stop_monitoring as stop_alert_monitoring, get_status as get_alert_status, configure as configure_alerts, check_emails_and_alert, send_toast_notification, send_whatsapp_text_alert, is_important_email
+from business_tools import add_event, get_events, get_today_events, delete_event, add_github_repo, get_github_repos, log_github_issue, get_github_issues, get_mood_playlist, log_mood_music, scan_document, get_scanned_documents, schedule_meeting, get_meetings, review_code, get_code_reviews, log_water, log_break, get_health_summary, log_expense, get_expenses, get_expense_summary, get_dashboard
+from enterprise_tools import create_automation, get_automations, toggle_automation, run_automation, draft_email, get_email_drafts, send_email, configure_email, test_email_connection, add_news_topic, get_news_topics, check_news, get_news_alerts, add_to_watchlist, get_watchlist, get_stock_price, check_price_alerts, add_client, get_clients, update_client_status, add_deal, get_deals, get_crm_summary
+from life_tools import add_habit, log_habit, get_habits, habit_status, habits_at_risk, start_focus, end_focus, get_focus_stats, focus_report, save_note, get_notes, search_notes, delete_note, save_link, get_links, start_meeting_recording, stop_meeting_recording, save_transcript, summarize_meeting, get_recordings, add_routine, get_routines, remove_routine, check_due_routines, pop_routine_alerts, start_routine_scheduler, stop_routine_scheduler, add_income, add_invoice, update_invoice_status, add_asset, add_liability, get_net_worth, get_finance_summary, get_finance_dashboard, life_briefing
+from hologram import launch as hologram_launch, send_command as hologram_command, is_running as hologram_running
+from hologram_models import get_model as hologram_model, save as hologram_save, list_models as hologram_list
 
 jarvis_memory = AIMemory()
 
@@ -68,6 +101,32 @@ SEND_SAMPLE_RATE    = 16000
 RECEIVE_SAMPLE_RATE = 24000
 CHUNK_SIZE          = 1024
 
+# --- self-listening (echo) guard ---------------------------------------------
+# JARVIS speaks through the speakers and hears itself through the mic; the
+# server-side VAD then mistakes its own voice for the user and answers itself.
+# While output audio is playing we mute the mic uplink, plus ECHO_GUARD_TAIL_S
+# of tail to cover speaker + room propagation delay.
+# Set ECHO_GUARD = False if you always use headphones and want to be able to
+# interrupt JARVIS mid-sentence (barge-in).
+ECHO_GUARD        = True
+ECHO_GUARD_TAIL_S = 0.55
+
+# --- speech detection (VAD) tuning -------------------------------------------
+# The Live API's automatic VAD decides when your turn has ended. With its
+# defaults, a short pause inside one sentence ("search for internships ...
+# for bca students") ends the turn early, so the model acts on a truncated
+# command — the classic "I said X but it heard half of X" symptom.
+#
+# Measured on a synthetic pause test (0.6 s gap mid-sentence):
+#   default  -> "search the web for internship opportunity"        (tail lost)
+#   sil=600  -> "search the web for internship opportunity for ..." (tail kept)
+#   sil=800  -> truncates short non-English utterances, do not use
+#   prefix_padding_ms=300 -> short utterances time out, do not use
+# so only silence_duration_ms is raised. Set VAD_TUNING = False to fall back
+# to the API defaults.
+VAD_TUNING     = True
+VAD_SILENCE_MS = 600   # pause length that ends your turn
+
 pya = pyaudio.PyAudio()
 
 def _get_api_key() -> str:
@@ -96,7 +155,8 @@ _last_memory_input    = ""
 def _update_memory_async(user_text: str, jarvis_text: str) -> None:
     """
     Multilingual memory updater.
-    Model  : gemini-2.5-flash-lite (lowest cost)
+    Model  : gemini-2.5-flash-lite, with automatic fallback to the next model
+             when its free-tier quota is exhausted (see gemini_util.py)
     Stage 1: Quick YES/NO check  → ~5 tokens output
     Stage 2: Full extraction     → only if Stage 1 says YES
     Result : ~80% fewer API calls vs original
@@ -119,28 +179,33 @@ def _update_memory_async(user_text: str, jarvis_text: str) -> None:
 
     try:
         from google import genai
-        genai.configure(api_key=_get_api_key())
-        model = genai.GenerativeModel("gemini-2.5-flash-lite")
+        client = genai.Client(api_key=_get_api_key())
 
-        check = model.generate_content(
-            f"Does this message contain personal facts about the user "
-            f"(name, age, city, job, hobby, relationship, birthday, preference)? "
-            f"Reply only YES or NO.\n\nMessage: {text[:300]}"
+        check = client.models.generate_content(
+            model="gemini-2.5-flash-lite",
+            contents=(
+                f"Does this message contain personal facts about the user "
+                f"(name, age, city, job, hobby, relationship, birthday, preference)? "
+                f"Reply only YES or NO.\n\nMessage: {text[:300]}"
+            )
         )
-        if "YES" not in check.text.upper():
+        if "YES" not in (getattr(check, "text", "") or "").upper():
             return
 
-        raw = model.generate_content(
-            f"Extract personal facts from this message. Any language.\n"
-            f"Return ONLY valid JSON or {{}} if nothing found.\n"
-            f"Extract: name, age, birthday, city, job, hobbies, preferences, relationships, language.\n"
-            f"Skip: weather, reminders, search results, commands.\n\n"
-            f"Format:\n"
-            f'{{"identity":{{"name":{{"value":"..."}}}}}}, '
-            f'"preferences":{{"hobby":{{"value":"..."}}}}, '
-            f'"notes":{{"job":{{"value":"..."}}}}}}\n\n'
-            f"Message: {text[:500]}\n\nJSON:"
-        ).text.strip()
+        raw = client.models.generate_content(
+            model="gemini-2.5-flash-lite",
+            contents=(
+                f"Extract personal facts from this message. Any language.\n"
+                f"Return ONLY valid JSON or {{}} if nothing found.\n"
+                f"Extract: name, age, birthday, city, job, hobbies, preferences, relationships, language.\n"
+                f"Skip: weather, reminders, search results, commands.\n\n"
+                f"Format:\n"
+                f'{{"identity":{{"name":{{"value":"..."}}}}}}, '
+                f'"preferences":{{"hobby":{{"value":"..."}}}}, '
+                f'"notes":{{"job":{{"value":"..."}}}}}}\n\n'
+                f"Message: {text[:500]}\n\nJSON:"
+            )
+        ).text or ""
 
         raw = re.sub(r"```(?:json)?", "", raw).strip().rstrip("`").strip()
         if not raw or raw == "{}":
@@ -162,9 +227,11 @@ TOOL_DECLARATIONS = [
     {
         "name": "open_app",
         "description": (
-            "Opens any application on the Windows computer. "
-            "Use this whenever the user asks to open, launch, or start any app, "
-            "website, or program. Always call this tool — never just say you opened it."
+            "Opens an application, or brings it to the front if it is already "
+            "open. Use this whenever the user asks to open, launch, or start an "
+            "app or program. If the app is already running this focuses the "
+            "existing window instead of opening a duplicate — so it is always "
+            "safe to call. Always call this tool — never just say you opened it."
         ),
         "parameters": {
             "type": "OBJECT",
@@ -176,6 +243,17 @@ TOOL_DECLARATIONS = [
             },
             "required": ["app_name"]
         }
+    },
+    {
+        "name": "get_open_windows",
+        "description": (
+            "Lists the windows and apps currently open on the computer. Call "
+            "this when the user refers to something already open — 'continue', "
+            "'that window', 'the app I opened', 'the same page' — and BEFORE "
+            "opening an app or website, so you can continue in the existing "
+            "window instead of opening a duplicate."
+        ),
+        "parameters": {"type": "OBJECT", "properties": {}}
     },
 {
     "name": "web_search",
@@ -307,9 +385,11 @@ TOOL_DECLARATIONS = [
     {
         "name": "browser_control",
         "description": (
-            "Controls the web browser. Use for: opening websites, searching the web, "
-            "clicking elements, filling forms, scrolling, finding cheapest products, "
-            "booking flights, any web-based task."
+            "Controls the web browser. It reuses ONE persistent browser window "
+            "across calls, so pass a URL to continue browsing in that same "
+            "window instead of opening a new one. Use for: opening websites, "
+            "searching the web, clicking elements, filling forms, scrolling, "
+            "finding cheapest products, booking flights, any web-based task."
         ),
         "parameters": {
             "type": "OBJECT",
@@ -427,6 +507,231 @@ TOOL_DECLARATIONS = [
     }
     },
     {
+        "name": "business",
+        "description": (
+            "Business tools: calendar, GitHub, mood music, document scanner, "
+            "meeting scheduler, code review, health tracker, expense tracker. "
+            "Use when user says 'add event', 'log expense', 'review code', "
+            "'what's my health today', 'scan document', 'schedule meeting', "
+            "'add github repo', 'play mood music', 'business dashboard', etc."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "action": {
+                    "type": "STRING",
+                    "description": "calendar_add | calendar_today | calendar_list | calendar_delete | github_repos | github_add_repo | github_issues | github_add_issue | mood_music | scan_doc | meeting_add | meeting_list | code_review | health | water | break | expense_add | expense_summary | expense_list | dashboard"
+                },
+                "id": {"type": "STRING", "description": "Record id (e.g. to delete an event)"},
+                "title": {"type": "STRING", "description": "Event/task/repo/issue title"},
+                "date": {"type": "STRING", "description": "Date YYYY-MM-DD"},
+                "time": {"type": "STRING", "description": "Time HH:MM"},
+                "description": {"type": "STRING", "description": "Details"},
+                "amount": {"type": "NUMBER", "description": "Expense amount"},
+                "category": {"type": "STRING", "description": "Category (food, transport, tools, etc.)"},
+                "name": {"type": "STRING", "description": "Name"},
+                "url": {"type": "STRING", "description": "URL"},
+                "path": {"type": "STRING", "description": "File path"},
+                "code": {"type": "STRING", "description": "Code to review"},
+                "language": {"type": "STRING", "description": "Programming language"},
+                "mood": {"type": "STRING", "description": "Mood for music"},
+                "attendees": {"type": "ARRAY", "items": {"type": "STRING"}, "description": "Meeting attendees"},
+            },
+            "required": ["action"]
+        }
+    },
+    {
+        "name": "enterprise",
+        "description": (
+            "Enterprise tools: task automation, email drafting, news monitoring, "
+            "stock/crypto tracking, client CRM. "
+            "Use when user says 'create automation', 'draft an email to', 'send email', "
+            "'track news about', 'add to watchlist', 'stock price', 'add client', "
+            "'update client status', 'add deal', 'crm summary', etc."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "action": {
+                    "type": "STRING",
+                    "description": "automation_create | automation_list | automation_toggle | automation_run | email_draft | email_drafts | email_send | email_config | email_test | news_add | news_topics | news_check | news_alerts | watchlist_add | watchlist_list | stock_price | price_alerts | client_add | client_list | client_status | deal_add | deal_list | crm_summary"
+                },
+                "name": {"type": "STRING", "description": "Automation name / client name"},
+                "title": {"type": "STRING", "description": "Title / subject / deal title"},
+                "trigger": {"type": "STRING", "description": "Automation trigger description"},
+                "actions": {"type": "ARRAY", "items": {"type": "STRING"}, "description": "Automation actions"},
+                "to": {"type": "STRING", "description": "Email recipient"},
+                "subject": {"type": "STRING", "description": "Email subject"},
+                "body": {"type": "STRING", "description": "Email body / details"},
+                "topic": {"type": "STRING", "description": "News topic"},
+                "keywords": {"type": "ARRAY", "items": {"type": "STRING"}, "description": "News keywords"},
+                "symbol": {"type": "STRING", "description": "Stock/crypto symbol"},
+                "alert_price": {"type": "NUMBER", "description": "Price alert threshold"},
+                "company": {"type": "STRING", "description": "Client company"},
+                "email": {"type": "STRING", "description": "Client email"},
+                "app_password": {"type": "STRING", "description": "Gmail app password (16 chars) for email_config"},
+                "phone": {"type": "STRING", "description": "Client phone"},
+                "status": {"type": "STRING", "description": "Client/deal status"},
+                "stage": {"type": "STRING", "description": "Deal stage"},
+                "value": {"type": "NUMBER", "description": "Deal/client value"},
+                "id": {"type": "STRING", "description": "Record id"},
+            },
+            "required": ["action"]
+        }
+    },
+    {
+        "name": "life",
+        "description": (
+            "Personal life management: habits & streaks, focus/Pomodoro sessions, "
+            "knowledge base (notes & links), meeting recording + summaries, "
+            "daily routine alarms, and finance / net-worth tracking. "
+            "Use when user says 'log my habit', 'start focus', 'save a note', "
+            "'search my notes', 'start meeting recording', 'summarize this', "
+            "'add a routine', 'log income', 'add invoice', 'net worth', "
+            "'finance dashboard', 'life briefing', etc."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "action": {
+                    "type": "STRING",
+                    "description": "habit_add | habit_log | habits | habit_status | habits_at_risk | focus_start | focus_end | focus_stats | focus_report | note_add | note_search | notes | note_delete | link_add | links | meeting_start | meeting_stop | meeting_save | meeting_summarize | recordings | routine_add | routines | routine_remove | routines_due | income_add | invoice_add | invoice_status | asset_add | liability_add | net_worth | finance_summary | finance_dashboard | life_briefing"
+                },
+                "name": {"type": "STRING", "description": "Habit/routine/asset/liability name"},
+                "title": {"type": "STRING", "description": "Note title / meeting title"},
+                "content": {"type": "STRING", "description": "Note content"},
+                "transcript": {"type": "STRING", "description": "Meeting transcript text"},
+                "query": {"type": "STRING", "description": "Search query / identifier"},
+                "tags": {"type": "ARRAY", "items": {"type": "STRING"}, "description": "Tags for a note or link"},
+                "frequency": {"type": "STRING", "description": "Habit frequency (daily | weekly)"},
+                "target_per_week": {"type": "INTEGER", "description": "Habit target per week"},
+                "url": {"type": "STRING", "description": "URL to save"},
+                "task": {"type": "STRING", "description": "Focus task name"},
+                "minutes": {"type": "INTEGER", "description": "Focus session length in minutes"},
+                "time": {"type": "STRING", "description": "Routine time HH:MM"},
+                "days": {"type": "ARRAY", "items": {"type": "INTEGER"}, "description": "Routine weekdays (0=Mon..6=Sun)"},
+                "action_text": {"type": "STRING", "description": "What the routine should do/say"},
+                "amount": {"type": "NUMBER", "description": "Money amount"},
+                "source": {"type": "STRING", "description": "Income source"},
+                "client": {"type": "STRING", "description": "Invoice client"},
+                "status": {"type": "STRING", "description": "Status (e.g. pending | paid)"},
+                "due": {"type": "STRING", "description": "Invoice due date"},
+                "kind": {"type": "STRING", "description": "Asset/liability kind"},
+                "id": {"type": "STRING", "description": "Record id / identifier"},
+            },
+            "required": ["action"]
+        }
+    },
+    {
+        "name": "smart_alert",
+        "description": (
+            "Configure and manage smart alerts. Use when user says 'enable whatsapp alerts', "
+            "'set my phone number', 'check alert status', 'send test alert', "
+            "'check now', 'enable alerts', etc."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "action": {
+                    "type": "STRING",
+                    "description": "configure | status | test_alert | check_now | enable | disable"
+                },
+                "phone_number": {"type": "STRING", "description": "Your phone number (with country code)"},
+            },
+            "required": ["action"]
+        }
+    },
+    {
+        "name": "notification",
+        "description": (
+            "Check and manage notifications. Use when user says 'any notifications', "
+            "'check emails', 'whatsapp messages', 'instagram notifications', "
+            "'mark all as read', 'notification briefing', etc."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "action": {
+                    "type": "STRING",
+                    "description": "briefing | mark_all_read | get_all"
+                }
+            },
+            "required": ["action"]
+        }
+    },
+    {
+        "name": "startup_task",
+        "description": (
+            "Manages startup tasks and milestones. Use when user says 'add startup task', "
+            "'complete milestone', 'show startup dashboard', 'what's our runway', "
+            "'track metric', 'save pitch draft', 'log partner message', etc."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "action": {
+                    "type": "STRING",
+                    "description": "add_task | complete_task | dashboard | add_milestone | complete_milestone | log_metric | save_pitch | partner_message | competitor | feature | team | investor"
+                },
+                "title": {"type": "STRING", "description": "Task/milestone title"},
+                "description": {"type": "STRING", "description": "Details"},
+                "priority": {"type": "STRING", "description": "low | normal | high | critical"},
+                "metric_name": {"type": "STRING", "description": "Metric name (e.g. MRR, users, runway)"},
+                "metric_value": {"type": "NUMBER", "description": "Metric value"},
+                "partner_name": {"type": "STRING", "description": "Partner name"},
+                "investor_name": {"type": "STRING", "description": "Investor name"},
+                "feature_name": {"type": "STRING", "description": "Feature name"},
+                "team_name": {"type": "STRING", "description": "Team member name"},
+                "role": {"type": "STRING", "description": "Role"},
+                "name": {"type": "STRING", "description": "General name field"},
+            },
+            "required": ["action"]
+        }
+    },
+    {
+        "name": "work_task",
+        "description": (
+            "Work productivity: tasks, emails, documents, code snippets. "
+            "Use when user says 'add task', 'draft email', 'save document', "
+            "'save code snippet', 'daily briefing', 'weekly summary', etc."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "action": {
+                    "type": "STRING",
+                    "description": "add_task | complete_task | pending_tasks | daily_briefing | weekly_summary | save_email | get_emails | save_document | get_documents | save_snippet | get_snippets | meeting_notes"
+                },
+                "title": {"type": "STRING", "description": "Task/title"},
+                "description": {"type": "STRING", "description": "Details/content"},
+                "to": {"type": "STRING", "description": "Email recipient"},
+                "subject": {"type": "STRING", "description": "Email subject"},
+                "body": {"type": "STRING", "description": "Email body or document content"},
+                "priority": {"type": "STRING", "description": "low | normal | high"},
+                "doc_type": {"type": "STRING", "description": "note | spec | proposal"},
+            },
+            "required": ["action"]
+        }
+    },
+    {
+        "name": "register_voice",
+        "description": (
+            "Registers the current speaker's voice with a given name. "
+            "Use when user says 'register my voice as [name]' or 'remember my voice'. "
+            "Saves voice fingerprint for future speaker identification."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "name": {
+                    "type": "STRING",
+                    "description": "Name to associate with the voice (e.g. 'Mahesh', 'John')"
+                }
+            },
+            "required": ["name"]
+        }
+    },
+    {
     "name": "agent_task",
     "description": (
         "Executes complex multi-step tasks that require MULTIPLE DIFFERENT tools. "
@@ -502,8 +807,63 @@ TOOL_DECLARATIONS = [
         },
         "required": ["origin", "destination", "date"]
     }
+},
+{
+    "name": "hologram",
+    "description": (
+        "Holographic 3D projector. Renders ANY object the user asks for as a "
+        "rotatable, glowing 3D hologram that can be exploded and inspected PART BY PART "
+        "(like Iron Man reviewing a build). It has a built-in library (cars, planes, houses, "
+        "animals, planets, devices, the Iron Man suit, shapes...) and can invent anything else "
+        "on the fly. Use when user says 'show me a car', 'display a dog in hologram', "
+        "'show the Earth in 3d', 'project the Iron Man suit', 'show a dragon hologram', "
+        "'explode the suit', 'show the wheels', 'close the hologram', etc."
+    ),
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "action": {
+                "type": "STRING",
+                "description": "show | explode | assemble | show_part | rotate | close | list"
+            },
+            "object": {
+                "type": "STRING",
+                "description": "What to display as a hologram (e.g. 'car', 'red car', 'dog', 'Earth', 'Iron Man suit', 'a coffee machine', 'dragon')"
+            },
+            "part": {
+                "type": "STRING",
+                "description": "Optional part to highlight after showing (e.g. 'wheels', 'helmet', 'engine')"
+            },
+            "value": {"type": "BOOLEAN", "description": "For rotate: true = auto-rotate, false = stop"}
+        },
+        "required": ["action"]
+    }
 }
 ]
+
+def _fmt_args(args: dict, limit: int = 90) -> str:
+    """Compact single-line form of tool arguments for the THINKING pane."""
+    try:
+        s = ", ".join(f"{k}={v}" for k, v in args.items())
+    except Exception:
+        s = str(args)
+    s = " ".join(str(s).split())
+    return s if len(s) <= limit else s[: limit - 1] + "…"
+
+
+def _tidy_sentence(chunks) -> str:
+    """Join streaming transcription fragments into one clean sentence.
+
+    Gemini Live emits the transcript word-piece by word-piece (" O", "pen",
+    " the", " note", "pad application."), so the fragments must be
+    concatenated verbatim and only then have their whitespace collapsed —
+    joining with " " would turn "note" + "pad" into "note pad".
+    """
+    try:
+        return " ".join("".join(str(c) for c in chunks).split())
+    except Exception:
+        return ""
+
 
 class JarvisLive:
 
@@ -513,6 +873,19 @@ class JarvisLive:
         self.audio_in_queue = None
         self.out_queue      = None
         self._loop          = None
+        self._mic_buffer    = bytearray()
+        self._mic_lock      = threading.Lock()
+        self._mic_max_bytes = SEND_SAMPLE_RATE * 2 * 3  # ~3s of 16-bit mono audio
+
+        # --- echo guard state -------------------------------------------------
+        self._last_play_ts = 0.0                 # when output last hit the speaker
+        self._play_lock    = threading.Lock()
+        self._echo_dropped = 0                   # mic chunks suppressed (diagnostic)
+
+        # --- speaker ID throttle ---------------------------------------------
+        # Input transcription streams many chunks per turn; only run speaker
+        # identification occasionally instead of spawning a thread per chunk.
+        self._last_voiceid_ts = 0.0
 
     def speak(self, text: str):
         """Thread-safe speak — any thread can call this."""
@@ -533,14 +906,16 @@ class JarvisLive:
         mem_str = format_memory_for_prompt(memory)
 
         sys_prompt = _load_system_prompt()
-        sys_prompt = _load_system_prompt()
 
-        with open(
-            "prompts/jarvis_personality.txt",
-            "r",
-            encoding="utf-8"
-        ) as f:
-            personality_prompt = f.read()
+        try:
+            with open(
+                BASE_DIR / "prompts" / "jarvis_personality.txt",
+                "r",
+                encoding="utf-8"
+            ) as f:
+                personality_prompt = f.read()
+        except Exception:
+            personality_prompt = ""
 
         sys_prompt = personality_prompt + "\n\n" + sys_prompt
 
@@ -558,6 +933,30 @@ class JarvisLive:
         else:
             sys_prompt = time_ctx + sys_prompt
 
+        # Snapshot of what is already open, so JARVIS continues in existing
+        # windows instead of opening duplicates.
+        try:
+            state_str = _describe_state(max_windows=10, max_apps=10)
+        except Exception:
+            state_str = ""
+        if state_str:
+            sys_prompt = (
+                "[CURRENTLY OPEN ON THE COMPUTER — continue in these windows "
+                "instead of opening duplicates; call get_open_windows for a "
+                "fresh list]\n" + state_str + "\n\n" + sys_prompt
+            )
+
+        # Automatic-VAD tuning (see VAD_* constants). Only raise the
+        # end-of-turn silence window; prefix padding and longer windows were
+        # measured to hurt short utterances, so they are deliberately unused.
+        vad_kwargs = {}
+        if VAD_TUNING:
+            vad_kwargs["realtime_input_config"] = types.RealtimeInputConfig(
+                automatic_activity_detection=types.AutomaticActivityDetection(
+                    silence_duration_ms=VAD_SILENCE_MS,
+                )
+            )
+
         return types.LiveConnectConfig(
             response_modalities=["AUDIO"],
             output_audio_transcription={},
@@ -565,6 +964,7 @@ class JarvisLive:
             system_instruction=sys_prompt,
             tools=[{"function_declarations": TOOL_DECLARATIONS}],
             session_resumption=types.SessionResumptionConfig(),
+            **vad_kwargs,
             speech_config=types.SpeechConfig(
                 voice_config=types.VoiceConfig(
                     prebuilt_voice_config=types.PrebuiltVoiceConfig(
@@ -579,9 +979,14 @@ class JarvisLive:
         args = dict(fc.args or {})
 
         print(f"[JARVIS] 🔧 TOOL: {name}  ARGS: {args}")
+        self.ui.jarvis_think("tool", f"{name}({_fmt_args(args)})")
+        if args:
+            self.ui.jarvis_think("args",
+                                 json.dumps(args, ensure_ascii=False, default=str))
 
         loop   = asyncio.get_event_loop()
         result = "Done."
+        failed = False
 
         try:
             if name == "open_app":
@@ -589,6 +994,10 @@ class JarvisLive:
                     None, lambda: open_app(parameters=args, response=None, player=self.ui)
                 )
                 result = r or f"Opened {args.get('app_name')} successfully."
+
+            elif name == "get_open_windows":
+                r = await loop.run_in_executor(None, lambda: _describe_state())
+                result = r or "No notable windows or apps are currently open."
 
             elif name == "weather_report":
                 r = await loop.run_in_executor(
@@ -679,6 +1088,422 @@ class JarvisLive:
                     )
                 )
                 result = r or "Done."
+            elif name == "register_voice":
+                speaker_name = args.get("name", "").strip()
+                if not speaker_name:
+                    raise ValueError("register_voice requires a 'name' parameter.")
+                voice_id = np.frombuffer(self._snapshot_mic_audio(), dtype=np.int16)
+                success = register_speaker(speaker_name, voice_id, sample_rate=SEND_SAMPLE_RATE)
+                result = f"Voice registered as '{speaker_name}', sir." if success else "Voice registration failed."
+
+            elif name == "business":
+                action = args.get("action", "")
+                if action == "calendar_add":
+                    e = add_event(args.get("title", ""), args.get("date", ""), args.get("time", ""), args.get("description", ""))
+                    result = f"Event added: {e['title']} on {e['date']} at {e['time']}"
+                elif action == "calendar_today":
+                    events = get_today_events()
+                    result = f"Today: {len(events)} events\n" + "\n".join(f"- {e['time']} {e['title']}" for e in events[:10]) if events else "No events today, sir."
+                elif action == "calendar_list":
+                    events = get_events(args.get("date", ""))
+                    result = f"Events: {len(events)}\n" + "\n".join(f"- {e['date']} {e['time']} {e['title']}" for e in events[:10])
+                elif action == "calendar_delete":
+                    ok = delete_event(args.get("id", "") or args.get("title", ""))
+                    result = "Event deleted, sir." if ok else "Event not found."
+                elif action == "github_repos":
+                    repos = get_github_repos()
+                    result = f"Repos: {len(repos)}\n" + "\n".join(f"- {r['name']}: {r['url']}" for r in repos[:10])
+                elif action == "github_add_repo":
+                    r = add_github_repo(args.get("name", ""), args.get("url", ""), args.get("description", ""))
+                    result = f"Repo added: {r['name']} ({r['url']})"
+                elif action == "github_issues":
+                    issues = get_github_issues()
+                    result = f"Open issues: {len(issues)}\n" + "\n".join(f"- [{i['repo']}] {i['title']}" for i in issues[:10])
+                elif action == "github_add_issue":
+                    i = log_github_issue(args.get("name", ""), args.get("title", ""), args.get("status", "open") or "open")
+                    result = f"Issue logged: {i['title']} in {i['repo']}"
+                elif action == "mood_music":
+                    mood = args.get("mood", "neutral")
+                    playlist = get_mood_playlist(mood)
+                    result = f"For {mood} mood: {', '.join(playlist[:3])}"
+                elif action == "scan_doc":
+                    d = scan_document(args.get("path", ""))
+                    result = f"Document scanned: {d.get('text', 'No text found')[:200]}"
+                elif action == "meeting_add":
+                    m = schedule_meeting(args.get("title", ""), args.get("date", ""), args.get("time", ""), args.get("attendees", []))
+                    result = f"Meeting scheduled: {m['title']} on {m['date']} at {m['time']}"
+                elif action == "meeting_list":
+                    meetings = get_meetings(args.get("date", ""))
+                    result = f"Meetings: {len(meetings)}\n" + "\n".join(f"- {m['date']} {m['time']} {m['title']}" for m in meetings[:10])
+                elif action == "code_review":
+                    r = review_code(args.get("code", ""), args.get("language", "python"))
+                    result = f"Code Review Score: {r['score']}/100\nIssues: {len(r['issues'])}\n" + "\n".join(f"- {i}" for i in r['issues'][:5])
+                elif action == "health":
+                    h = get_health_summary()
+                    result = f"Water: {h['water_today_ml']}ml ({h['water_percentage']}%)\nBreaks: {h['breaks_today']}/{h['recommended_breaks']}"
+                elif action == "water":
+                    w = log_water(args.get("amount", 250))
+                    result = f"Water logged. Today: {w['water_today_ml']}ml of {w['goal_ml']}ml"
+                elif action == "break":
+                    b = log_break()
+                    result = f"Break logged. Today: {b['breaks_today']} breaks"
+                elif action == "expense_add":
+                    e = log_expense(args.get("amount", 0), args.get("category", ""), args.get("description", ""))
+                    result = f"Expense logged: ₹{e['amount']} for {e['category']}"
+                elif action == "expense_summary":
+                    s = get_expense_summary()
+                    result = f"Today: ₹{s['today_total']}\nMonth: ₹{s['month_total']}\nCategories: {s['by_category']}"
+                elif action == "expense_list":
+                    expenses = get_expenses()
+                    result = f"Expenses: {len(expenses)}\n" + "\n".join(f"- {e['date']} ₹{e['amount']} {e['category']}" for e in expenses[:10])
+                elif action == "dashboard":
+                    d = get_dashboard()
+                    result = f"Business Dashboard:\n- Health: {d['health']['water_percentage']}% water, {d['health']['breaks_today']} breaks\n- Expenses: ₹{d['expenses']['today_total']} today\n- Calendar: {d['calendar_today']} events today\n- GitHub: {d['open_issues']} open issues"
+                else:
+                    result = f"Unknown business action: {action}"
+
+            elif name == "enterprise":
+                action = args.get("action", "")
+                if action == "automation_create":
+                    a = create_automation(args.get("name", ""), args.get("trigger", ""), args.get("actions", []))
+                    result = f"Automation created: {a['name']} ({len(a['actions'])} actions)"
+                elif action == "automation_list":
+                    autos = get_automations()
+                    result = f"Automations: {len(autos)}\n" + "\n".join(f"- {a['id']} {a['name']} [{'on' if a['active'] else 'off'}]" for a in autos[:10]) if autos else "No automations, sir."
+                elif action == "automation_toggle":
+                    ok = toggle_automation(args.get("id", ""))
+                    result = "Automation toggled, sir." if ok else "Automation not found."
+                elif action == "automation_run":
+                    r = run_automation(args.get("id", ""))
+                    result = f"Automation {r.get('automation', '')} {r['status']}, sir."
+                elif action == "email_draft":
+                    d = draft_email(args.get("to", ""), args.get("subject", ""), args.get("body", ""))
+                    result = f"Draft saved (id {d['id']}) to {d['to']}, subject '{d['subject']}'."
+                elif action == "email_drafts":
+                    drafts = get_email_drafts()
+                    result = f"Drafts: {len(drafts)}\n" + "\n".join(f"- {d['id']} to {d['to']}: {d['subject']}" for d in drafts[:10])
+                elif action == "email_send":
+                    ok, msg = send_email(args.get("to", ""), args.get("subject", ""), args.get("body", ""))
+                    result = msg
+                elif action == "email_config":
+                    c = configure_email(args.get("email", ""), args.get("app_password", ""))
+                    result = c.get("note") or c.get("error", "Done.")
+                elif action == "email_test":
+                    ok, msg = test_email_connection()
+                    result = msg
+                elif action == "news_add":
+                    n = add_news_topic(args.get("topic", ""), args.get("keywords", []))
+                    result = f"Now tracking news on '{n['topic']}'."
+                elif action == "news_topics":
+                    topics = get_news_topics()
+                    result = f"News topics: {len(topics)}\n" + "\n".join(f"- {t['topic']}" for t in topics[:10])
+                elif action == "news_check":
+                    alerts = check_news()
+                    result = f"News check complete: {len(alerts)} new items.\n" + "\n".join(f"- {a['title']}" for a in alerts[:5])
+                elif action == "news_alerts":
+                    alerts = get_news_alerts()
+                    result = f"Recent news: {len(alerts)}\n" + "\n".join(f"- {a['title']}" for a in alerts[:5])
+                elif action == "watchlist_add":
+                    w = add_to_watchlist(args.get("symbol", ""), args.get("name", ""), args.get("alert_price"))
+                    result = f"Added {w['symbol']} ({w['name']}) to watchlist."
+                elif action == "watchlist_list":
+                    wl = get_watchlist()
+                    result = f"Watchlist: {len(wl)}\n" + "\n".join(f"- {w['symbol']} ({w['name']})" for w in wl[:10])
+                elif action == "stock_price":
+                    p = get_stock_price(args.get("symbol", ""))
+                    result = f"{p['symbol']}: {p['price']} {p['currency']} ({p['change']}%)"
+                elif action == "price_alerts":
+                    alerts = check_price_alerts()
+                    result = f"Triggered price alerts: {len(alerts)}\n" + "\n".join(f"- {a['symbol']} at {a['current_price']}" for a in alerts[:10])
+                elif action == "client_add":
+                    c = add_client(args.get("name", ""), args.get("company", ""), args.get("email", ""), args.get("phone", ""), args.get("value", 0))
+                    result = f"Client added: {c['name']} ({c['company']}) [{c['status']}]"
+                elif action == "client_list":
+                    clients = get_clients(args.get("status") or None)
+                    result = f"Clients: {len(clients)}\n" + "\n".join(f"- {c['name']} ({c['company']}) [{c['status']}]" for c in clients[:10])
+                elif action == "client_status":
+                    ok = update_client_status(args.get("id", ""), args.get("status", ""))
+                    result = "Client status updated, sir." if ok else "Client not found or invalid status."
+                elif action == "deal_add":
+                    d = add_deal(args.get("name", ""), args.get("title", ""), args.get("value", 0), args.get("stage", "lead"))
+                    result = f"Deal added: {d['title']} for {d['client']} (₹{d['value']}) [{d['stage']}]"
+                elif action == "deal_list":
+                    deals = get_deals(args.get("stage") or None)
+                    result = f"Deals: {len(deals)}\n" + "\n".join(f"- {d['client']} {d['title']} ₹{d['value']} [{d['stage']}]" for d in deals[:10])
+                elif action == "crm_summary":
+                    s = get_crm_summary()
+                    result = f"CRM: {s['total_clients']} clients, {s['active_deals']} deals\nPipeline value: ₹{s['total_pipeline_value']}\nWon: ₹{s['won_value']} ({s['win_rate']:.0f}%)"
+                else:
+                    result = f"Unknown enterprise action: {action}"
+
+            elif name == "life":
+                action = args.get("action", "")
+                if action == "habit_add":
+                    h = add_habit(args.get("name", ""), args.get("frequency", "daily"), args.get("target_per_week", 7))
+                    result = f"Habit tracked: {h['name']} (streak {h['streak']})"
+                elif action == "habit_log":
+                    h = log_habit(args.get("name", ""))
+                    result = f"{h['name']} logged. Streak: {h['streak']} day(s), best {h['best_streak']}."
+                elif action == "habits":
+                    hs = get_habits()
+                    result = "Habits:\n" + "\n".join(f"- {h['name']}: {h['streak']}d streak ({h['this_week']}/{h['target_per_week']} this week)" for h in hs) if hs else "No habits yet, sir."
+                elif action == "habit_status":
+                    h = habit_status(args.get("name", ""))
+                    result = f"{h['name']}: streak {h['streak']}, best {h['best_streak']}, done today: {h['done_today']}" if h else "Habit not found."
+                elif action == "habits_at_risk":
+                    r = habits_at_risk()
+                    result = "Pending today: " + ", ".join(h["name"] for h in r) if r else "All habits done today, sir."
+                elif action == "focus_start":
+                    f = start_focus(args.get("task", ""), args.get("minutes", 25))
+                    result = f"Focus started: {f['task']} for {f['minutes']} minutes."
+                elif action == "focus_end":
+                    result = end_focus()["message"]
+                elif action == "focus_stats":
+                    s = get_focus_stats()
+                    result = f"Focus: {s['minutes_today']} min today ({s['sessions_today']} sessions), {s['minutes_week']} min this week."
+                elif action == "focus_report":
+                    result = focus_report()
+                elif action == "note_add":
+                    n = save_note(args.get("title", ""), args.get("content", ""), args.get("tags", []))
+                    result = f"Note saved: {n['title']} ({n['id']})"
+                elif action == "note_search":
+                    res = search_notes(args.get("query", ""))
+                    result = f"Found {len(res)}:\n" + "\n".join(f"- {r.get('title','')}: {(r.get('content') or r.get('url',''))[:60]}" for r in res[:5]) if res else "Nothing found, sir."
+                elif action == "notes":
+                    ns = get_notes(args.get("name") or None)
+                    result = f"Notes: {len(ns)}\n" + "\n".join(f"- {n['title']}" for n in ns[:10]) if ns else "No notes yet, sir."
+                elif action == "note_delete":
+                    ok = delete_note(args.get("query", "") or args.get("title", ""))
+                    result = "Note deleted, sir." if ok else "Note not found."
+                elif action == "link_add":
+                    l = save_link(args.get("url", ""), args.get("title", ""), args.get("tags", []))
+                    result = f"Link saved: {l['title']}"
+                elif action == "links":
+                    ls = get_links(args.get("name") or None)
+                    result = f"Links: {len(ls)}\n" + "\n".join(f"- {l['title']}: {l['url']}" for l in ls[:10]) if ls else "No links saved, sir."
+                elif action == "meeting_start":
+                    m = start_meeting_recording(args.get("title", "Meeting"))
+                    result = f"Recording meeting '{m['title']}'."
+                elif action == "meeting_stop":
+                    m = stop_meeting_recording(args.get("transcript", ""))
+                    if m.get("status") == "none":
+                        result = m["message"]
+                    else:
+                        s = m.get("summary") or {}
+                        result = f"Meeting saved: {m['title']}. Summary: {s.get('summary','')[:200]}"
+                elif action == "meeting_save":
+                    r = save_transcript(args.get("title", "Meeting"), args.get("transcript", ""))
+                    s = r.get("summary") or {}
+                    result = f"Meeting saved with {len(s.get('action_items',[]))} action item(s)."
+                elif action == "meeting_summarize":
+                    s = summarize_meeting(args.get("transcript", ""))
+                    result = ("Summary: " + s["summary"][:300] +
+                              "\nActions: " + "; ".join(s["action_items"][:5]) +
+                              "\nDecisions: " + "; ".join(s["decisions"][:5]))
+                elif action == "recordings":
+                    rs = get_recordings()
+                    result = f"Recordings: {len(rs)}\n" + "\n".join(f"- {r['title']} ({r['ended'][:10]})" for r in rs[:10]) if rs else "No recordings, sir."
+                elif action == "routine_add":
+                    r = add_routine(args.get("name", ""), args.get("time", ""), args.get("action_text", "") or args.get("name", ""), args.get("days"))
+                    result = f"Routine set: {r['name']} at {r['time']}."
+                elif action == "routines":
+                    rs = get_routines()
+                    result = "Routines:\n" + "\n".join(f"- {r['time']} {r['name']}" for r in rs) if rs else "No routines set, sir."
+                elif action == "routine_remove":
+                    ok = remove_routine(args.get("name", "") or args.get("id", ""))
+                    result = "Routine removed, sir." if ok else "Routine not found."
+                elif action == "routines_due":
+                    fired = check_due_routines()
+                    result = "Fired: " + ", ".join(f["routine"] for f in fired) if fired else "No routines due right now, sir."
+                elif action == "income_add":
+                    i = add_income(args.get("amount", 0), args.get("source", ""), args.get("content", ""))
+                    result = f"Income logged: \u20b9{i['amount']} from {i['source']}."
+                elif action == "invoice_add":
+                    inv = add_invoice(args.get("client", ""), args.get("amount", 0), args.get("status", "pending"), args.get("due", ""))
+                    result = f"Invoice added: {inv['client']} \u20b9{inv['amount']} [{inv['status']}], due {inv['due'] or 'n/a'}."
+                elif action == "invoice_status":
+                    ok = update_invoice_status(args.get("client", "") or args.get("id", ""), args.get("status", ""))
+                    result = "Invoice status updated, sir." if ok else "Invoice not found."
+                elif action == "asset_add":
+                    a = add_asset(args.get("name", ""), args.get("amount", 0), args.get("kind", "asset"))
+                    result = f"Asset added: {a['name']} \u20b9{a['value']}."
+                elif action == "liability_add":
+                    l = add_liability(args.get("name", ""), args.get("amount", 0), args.get("kind", "loan"))
+                    result = f"Liability added: {l['name']} \u20b9{l['value']}."
+                elif action == "net_worth":
+                    nw = get_net_worth()
+                    result = f"Net worth: \u20b9{nw['net_worth']} (assets \u20b9{nw['assets']}, liabilities \u20b9{nw['liabilities']})."
+                elif action == "finance_summary":
+                    s = get_finance_summary()
+                    result = f"Finance: income \u20b9{s['income_month']} / expenses \u20b9{s['expenses_month']} this month, profit \u20b9{s['profit_month']}, outstanding \u20b9{s['invoices_outstanding']}."
+                elif action == "finance_dashboard":
+                    result = get_finance_dashboard()
+                elif action == "life_briefing":
+                    result = life_briefing()
+                else:
+                    result = f"Unknown life action: {action}"
+
+            elif name == "hologram":
+                action = (args.get("action") or "show").lower()
+                obj = args.get("object") or args.get("name") or args.get("part")
+                part = args.get("part")
+                try:
+                    if action in ("show", "open", "display", "view", "launch", "project"):
+                        if not obj:
+                            result = "What shall I project, sir?"
+                        else:
+                            model = hologram_model(obj)
+                            path = hologram_save(model, obj)
+                            hologram_launch(model_path=path)
+                            result = (f"Projecting {model['name']} as a hologram, sir "
+                                      f"({len(model['parts'])} parts).")
+                    elif action in ("show_part", "focus", "select"):
+                        if not obj:
+                            result = "Which object and part, sir?"
+                        else:
+                            model = hologram_model(obj)
+                            path = hologram_save(model, obj)
+                            hologram_launch(model_path=path, part=part or obj)
+                            result = f"Highlighting the {part or obj}, sir."
+                    elif action == "explode":
+                        hologram_launch(explode=True)
+                        result = "Exploded view engaged, sir."
+                    elif action == "assemble":
+                        hologram_launch(explode=False)
+                        result = "Reassembling, sir."
+                    elif action == "rotate":
+                        val = args.get("value")
+                        hologram_command({"action": "autorotate",
+                                          "value": True if val is None else bool(val)})
+                        result = "Rotation updated, sir."
+                    elif action in ("close", "quit", "stop", "hide"):
+                        hologram_command({"action": "quit"})
+                        result = "Closing the hologram, sir."
+                    elif action in ("list", "library"):
+                        names = ", ".join(hologram_list())
+                        result = f"I have {len(hologram_list())} built-in objects, sir: {names}."
+                    else:
+                        result = f"Unknown hologram action: {action}"
+                except Exception as e:
+                    print(f"[JARVIS] Hologram error: {e}")
+                    result = "I couldn't open the holographic display, sir."
+
+            elif name == "smart_alert":
+                action = args.get("action", "")
+                if action == "configure":
+                    config = configure_alerts(args.get("phone_number", ""))
+                    result = f"WhatsApp alerts configured. Phone: {config['user_phone']}"
+                elif action == "status":
+                    s = get_alert_status()
+                    result = f"Alerts enabled: {s['enabled']}\nTotal alerts: {s['total_alerts_sent']}\nInterval: {s['check_interval']}s"
+                elif action == "test_alert":
+                    from smart_alerts import _load_config
+                    cfg = _load_config()
+                    ok = send_whatsapp_text_alert(cfg["user_phone"], "JARVIS test: WhatsApp alerts are working, sir.")
+                    result = "Test WhatsApp alert sent, sir." if ok else "Failed. Check phone number."
+                elif action == "check_now":
+                    emails = check_emails_and_alert()
+                    result = f"Found {len(emails)} important emails." if emails else "No important emails right now, sir."
+                elif action == "enable":
+                    start_alert_monitoring()
+                    result = "WhatsApp alerts enabled, sir."
+                elif action == "disable":
+                    stop_alert_monitoring()
+                    result = "WhatsApp alerts disabled, sir."
+                else:
+                    result = f"Unknown alert action: {action}"
+
+            elif name == "notification":
+                action = args.get("action", "")
+                if action == "briefing":
+                    result = briefing()
+                elif action == "get_all":
+                    n = get_all_notifications()
+                    result = f"Total unread: {n['total']}\nEmails: {len(n['emails'])}\nWhatsApp: {len(n['whatsapp'])}\nInstagram: {len(n['instagram'])}"
+                elif action == "mark_all_read":
+                    mark_all_read()
+                    result = "All notifications marked as read, sir."
+                else:
+                    result = f"Unknown notification action: {action}"
+
+            elif name == "startup_task":
+                action = args.get("action", "")
+                if action == "dashboard":
+                    result = json.dumps(startup_dashboard(), indent=2, ensure_ascii=False)
+                elif action == "add_task":
+                    task = add_task(args.get("title", ""), args.get("priority", "normal"))
+                    result = f"Task added: {task['title']}"
+                elif action == "complete_task":
+                    ok = complete_task(args.get("title", ""))
+                    result = "Milestone completed, sir." if ok else "Task not found."
+                elif action == "add_milestone":
+                    ms = add_milestone(args.get("title", ""), args.get("description", ""))
+                    result = f"Milestone added: {ms['title']}"
+                elif action == "complete_milestone":
+                    ok = complete_milestone(args.get("title", ""))
+                    result = "Milestone completed, sir." if ok else "Milestone not found."
+                elif action == "log_metric":
+                    m = log_metric(args.get("metric_name", ""), args.get("metric_value", 0), args.get("description", ""))
+                    result = f"Metric logged: {m['metric']} = {m['value']}"
+                elif action == "save_pitch":
+                    d = save_pitch_draft(args.get("title", ""), args.get("description", ""))
+                    result = f"Pitch draft saved: {d['title']}"
+                elif action == "partner_message":
+                    m = log_partner_message(args.get("partner_name", ""), args.get("message", args.get("description", "")))
+                    result = f"Message logged for {m['partner']}"
+                elif action == "competitor":
+                    c = add_competitor(args.get("name", ""), args.get("title", ""), args.get("description", ""))
+                    result = f"Competitor added: {c['name']}"
+                elif action == "feature":
+                    f = add_product_feature(args.get("feature_name", args.get("name", "")), args.get("description", ""))
+                    result = f"Feature added: {f['name']}"
+                elif action == "team":
+                    t = add_team_member(args.get("team_name", args.get("name", "")), args.get("role", ""))
+                    result = f"Team member added: {t['name']} as {t['role']}"
+                elif action == "investor":
+                    u = log_investor_update(args.get("investor_name", ""), args.get("update", args.get("description", "")))
+                    result = f"Investor update logged: {u['investor']}"
+                else:
+                    result = f"Unknown startup action: {action}"
+
+            elif name == "work_task":
+                action = args.get("action", "")
+                if action == "add_task":
+                    t = add_task(args.get("title", ""), args.get("priority", "normal"))
+                    result = f"Task added: {t['title']}"
+                elif action == "complete_task":
+                    ok = complete_task(args.get("title", "") or args.get("id", ""))
+                    result = "Task marked complete, sir." if ok else "Task not found."
+                elif action == "pending_tasks":
+                    tasks = get_pending_tasks()
+                    result = f"Pending tasks: {len(tasks)}\n" + "\n".join(f"- [{t['priority']}] {t['title']}" for t in tasks[:10])
+                elif action == "daily_briefing":
+                    b = daily_briefing()
+                    result = f"Daily Briefing ({b['date']}):\n- Pending tasks: {b['total_pending_tasks']}\n- High priority: {b['high_priority_tasks']}\n- Meetings today: {b['meetings_today']}\n- Pending emails: {b['pending_emails']}"
+                elif action == "weekly_summary":
+                    w = weekly_summary()
+                    result = f"Week of {w['week_of']}:\n- Completed: {w['tasks_completed']}\n- Pending: {w['tasks_pending']}\n- Meetings: {w['meetings_this_week']}"
+                elif action == "save_email":
+                    d = wa_draft_email(args.get("to", ""), args.get("subject", ""), args.get("body", ""))
+                    result = f"Email draft saved to {d['to']}"
+                elif action == "get_emails":
+                    emails = wa_get_email_drafts()
+                    result = f"Email drafts: {len(emails)}"
+                elif action == "save_document":
+                    d = save_document(args.get("title", ""), args.get("description", args.get("body", "")), args.get("doc_type", "note"))
+                    result = f"Document saved: {d['title']}"
+                elif action == "get_documents":
+                    docs = get_documents()
+                    result = f"Documents: {len(docs)}"
+                elif action == "save_snippet":
+                    s = save_code_snippet(args.get("title", ""), args.get("description", args.get("body", "")))
+                    result = f"Code snippet saved: {s['description'][:50]}"
+                elif action == "meeting_notes":
+                    m = save_meeting_notes(args.get("title", ""), args.get("description", args.get("body", "")))
+                    result = f"Meeting notes saved: {m['title']}"
+                else:
+                    result = f"Unknown work action: {action}"
+
             elif name == "agent_task":
                 goal         = args.get("goal", "")
                 priority_str = args.get("priority", "normal").lower()
@@ -697,6 +1522,8 @@ class JarvisLive:
                     priority=priority,
                     speak=self.speak,
                 )
+                self.ui.jarvis_think("sys", f"queued background task "
+                                            f"[{task_id}]: {goal}")
                 result = f"Task started (ID: {task_id}). I'll update you as I make progress, sir."
             elif name == "spotify_control":
                 r = await loop.run_in_executor(
@@ -724,10 +1551,14 @@ class JarvisLive:
                 result = f"Unknown tool: {name}"
             
         except Exception as e:
+            failed = True
             result = f"Tool '{name}' failed: {e}"
             traceback.print_exc()
+            self.ui.jarvis_think("err", result)
 
         print(f"[JARVIS] 📤 {name} → {result[:80]}")
+        if not failed:
+            self.ui.jarvis_think("result", str(result))
 
         return types.FunctionResponse(
             id=fc.id,
@@ -740,8 +1571,30 @@ class JarvisLive:
             msg = await self.out_queue.get()
             await self.session.send_realtime_input(media=msg)
 
+    def _snapshot_mic_audio(self) -> bytes:
+        """Return a copy of the most recent microphone audio (thread-safe)."""
+        with self._mic_lock:
+            return bytes(self._mic_buffer)
+
+    def _mark_output_playing(self):
+        """Record that a chunk of JARVIS audio just went to the speaker."""
+        with self._play_lock:
+            self._last_play_ts = time.time()
+
+    def _output_playing(self) -> bool:
+        """True while JARVIS's own voice may still be audible in the room.
+
+        Includes ECHO_GUARD_TAIL_S of tail so speaker + room propagation is
+        covered; the mic uplink is muted for this whole window.
+        """
+        if not ECHO_GUARD:
+            return False
+        with self._play_lock:
+            return (time.time() - self._last_play_ts) < ECHO_GUARD_TAIL_S
+
     async def _listen_audio(self):
-        print("[JARVIS] 🎤 Mic started")
+        print(f"[JARVIS] 🎤 Mic started (echo guard: "
+              f"{'ON' if ECHO_GUARD else 'OFF'}, tail {ECHO_GUARD_TAIL_S}s)")
         stream = await asyncio.to_thread(
             pya.open,
             format=FORMAT,
@@ -756,6 +1609,15 @@ class JarvisLive:
                     stream.read, CHUNK_SIZE, exception_on_overflow=False
                 )
 
+                # Half-duplex echo guard: keep reading so the device buffer
+                # never backs up, but don't let JARVIS's own voice reach
+                # Gemini (which would treat it as a user command).
+                if self._output_playing():
+                    self._echo_dropped += 1
+                    self.ui.update_mic_level(0.0)
+                    await asyncio.sleep(0)
+                    continue
+
                 samples = np.frombuffer(data, dtype=np.int16)
 
                 level = min(
@@ -765,9 +1627,14 @@ class JarvisLive:
 
                 self.ui.update_mic_level(level)
 
+                with self._mic_lock:
+                    self._mic_buffer.extend(data)
+                    if len(self._mic_buffer) > self._mic_max_bytes:
+                        del self._mic_buffer[:-self._mic_max_bytes]
+
                 await self.out_queue.put({
                     "data": data,
-                    "mime_type": "audio/pcm"
+                    "mime_type": f"audio/pcm;rate={SEND_SAMPLE_RATE}"
                 })
         except Exception as e:
             print(f"[JARVIS] ❌ Mic error: {e}")
@@ -775,10 +1642,31 @@ class JarvisLive:
         finally:
             stream.close()
 
+    def _identify_speaker(self, audio_data: bytes):
+        """Run speaker identification on captured audio."""
+        try:
+            if not voice_id_available():
+                return
+            samples = np.frombuffer(audio_data, dtype=np.int16)
+            if len(samples) < 16000:
+                return
+            result = identify_speaker(samples, sample_rate=SEND_SAMPLE_RATE)
+            if result["status"] == "known":
+                self.ui.write_log(f"Speaker: {result['name']} ({result['confidence']:.0%})")
+                self.ui.jarvis_think("sys", f"voice match: {result['name']} "
+                                            f"({result['confidence']:.0%})")
+            elif result["status"] == "unknown":
+                self.ui.write_log(f"Speaker: {result['name']} (new — will remember)")
+                self.ui.jarvis_think("sys", f"new voice: {result['name']} "
+                                            f"— registering")
+        except Exception as e:
+            print(f"[VoiceID] Identification error: {e}")
+
     async def _receive_audio(self):
         print("[JARVIS] 👂 Recv started")
         out_buf = []
         in_buf  = []
+        last_activity = time.time()
 
         try:
             while True:
@@ -787,38 +1675,72 @@ class JarvisLive:
 
                     if response.data:
                         self.audio_in_queue.put_nowait(response.data)
+                        last_activity = time.time()
 
                     if response.server_content:
                         sc = response.server_content
 
                         if sc.input_transcription and sc.input_transcription.text:
-                            txt = sc.input_transcription.text.strip()
-                            if txt:
-                                in_buf.append(txt)
+                            frag = sc.input_transcription.text
+                            if self._output_playing():
+                                # Bleed-through of JARVIS's own voice — never
+                                # treat it as a user command or a memory.
+                                shown = frag.strip()
+                                if shown:
+                                    self.ui.jarvis_think("sys", f"ignored echo: {shown[:70]}")
+                            else:
+                                # Gemini streams the transcript in fragments
+                                # (" O", "pen", ...). Keep them verbatim and log
+                                # the finished sentence once, when the turn ends,
+                                # so the LOG pane doesn't look like garbled
+                                # listening.
+                                in_buf.append(frag)
+                                # Speaker ID is expensive and streams many
+                                # chunks per turn — throttle it and skip
+                                # entirely when the backend is missing.
+                                now_ts = time.time()
+                                if (
+                                    voice_id_available()
+                                    and now_ts - self._last_voiceid_ts >= 2.0
+                                ):
+                                    self._last_voiceid_ts = now_ts
+                                    threading.Thread(
+                                        target=self._identify_speaker,
+                                        args=(self._snapshot_mic_audio(),),
+                                        daemon=True
+                                    ).start()
 
                         if sc.output_transcription and sc.output_transcription.text:
-                            txt = sc.output_transcription.text.strip()
-                            if txt:
-                                out_buf.append(txt)
+                            frag = sc.output_transcription.text
+                            if frag and frag.strip():
+                                out_buf.append(frag)
+                                # live single-line preview while JARVIS talks
+                                self.ui.stream_jarvis_text(frag.strip() + " ")
 
                         if sc.turn_complete:
-                            full_in  = ""
-                            full_out = ""
-
-                            if in_buf:
-                                full_in = " ".join(in_buf).strip()
-                                if full_in:
-                                    self.ui.write_log(f"You: {full_in}")
-                                    memory_update = extract_memory(full_in)
-                                    if memory_update:
-                                        update_memory(memory_update)
+                            # Fragments are additive, so concatenate them (NOT
+                            # join with spaces: "note" + "pad" -> "notepad").
+                            full_in  = _tidy_sentence(in_buf)
+                            full_out = _tidy_sentence(out_buf)
                             in_buf = []
-
-                            if out_buf:
-                                full_out = " ".join(out_buf).strip()
-                                if full_out:
-                                    self.ui.write_log(f"Jarvis: {full_out}")
                             out_buf = []
+
+                            if full_in:
+                                self.ui.write_log(f"You: {full_in}")
+                                self.ui.jarvis_think("in", full_in)
+
+                                memory_update = extract_memory(full_in)
+                                if memory_update:
+                                    update_memory(memory_update)
+
+                                emotion = detect_emotion(full_in)
+                                if emotion != "neutral":
+                                    self.ui.write_log(f"[Mood: {emotion}]")
+                                    remember_experience(
+                                        f"User was {emotion}: {full_in[:80]}")
+
+                            if full_out:
+                                self.ui.write_log(f"Jarvis: {full_out}")
 
                             if full_in and len(full_in) > 5:
                                 threading.Thread(
@@ -839,6 +1761,7 @@ class JarvisLive:
 
         except Exception as e:
             print(f"[JARVIS] ❌ Recv error: {e}")
+            self.ui.jarvis_think("err", f"receive loop: {e}")
             traceback.print_exc()
             raise
 
@@ -851,15 +1774,62 @@ class JarvisLive:
             rate=RECEIVE_SAMPLE_RATE,
             output=True,
         )
+        silence_start = None
         try:
             while True:
-                chunk = await self.audio_in_queue.get()
-                await asyncio.to_thread(stream.write, chunk)
+                try:
+                    chunk = await asyncio.wait_for(
+                        self.audio_in_queue.get(),
+                        timeout=0.5
+                    )
+                    if not self.ui.speaking:
+                        self.ui.start_speaking()
+                    self._mark_output_playing()
+                    await asyncio.to_thread(stream.write, chunk)
+                    silence_start = None
+                except asyncio.TimeoutError:
+                    pass
+
+                try:
+                    while not self.audio_in_queue.empty():
+                        extra = self.audio_in_queue.get_nowait()
+                        self._mark_output_playing()
+                        await asyncio.to_thread(stream.write, extra)
+                except asyncio.QueueEmpty:
+                    pass
+
+                # queue drained and the echo tail has elapsed → mic live again
+                if self.ui.speaking and not self._output_playing():
+                    self.ui.stop_speaking()
         except Exception as e:
             print(f"[JARVIS] ❌ Play error: {e}")
             raise
         finally:
             stream.close()
+
+    async def _watch_routines(self):
+        """Proactively surface daily-routine alerts and habit nudges."""
+        from datetime import datetime as _dt
+        last_nudge = 0.0
+        while True:
+            try:
+                alerts = await asyncio.to_thread(pop_routine_alerts)
+                for alert in alerts:
+                    self.ui.write_log(f"Routine: {alert['message']}")
+                    self.speak(f"Routine reminder, sir. {alert['message']}")
+
+                # Every ~30 min, nudge about habits not done yet today (evening only).
+                now = time.time()
+                if now - last_nudge > 1800:
+                    last_nudge = now
+                    pending = await asyncio.to_thread(habits_at_risk)
+                    if pending and _dt.now().hour >= 18:
+                        names = ", ".join(h["name"] for h in pending)
+                        self.speak(f"Sir, you still haven't logged these habits today: {names}.")
+            except Exception as e:
+                print(f"[JARVIS] Routine watcher error: {e}")
+
+            await asyncio.sleep(20)
 
     async def run(self):
         client = genai.Client(
@@ -872,10 +1842,7 @@ class JarvisLive:
                 print("[JARVIS] 🔌 Connecting...")
                 config = self._build_config()
 
-                async with (
-                    client.aio.live.connect(model=LIVE_MODEL, config=config) as session,
-                    asyncio.TaskGroup() as tg,
-                ):
+                async with client.aio.live.connect(model=LIVE_MODEL, config=config) as session:
                     self.session        = session
                     self._loop          = asyncio.get_event_loop() 
                     self.audio_in_queue = asyncio.Queue()
@@ -883,14 +1850,56 @@ class JarvisLive:
 
                     print("[JARVIS] ✅ Connected.")
                     self.ui.write_log("JARVIS online.")
+                    self.ui.jarvis_think("sys", "connected to Gemini Live — session established")
+                    _name = ""
+                    try:
+                        _identity = load_memory().get("identity", {}) or {}
+                        _entry = _identity.get("name")
+                        _name = (_entry.get("value") if isinstance(_entry, dict) else _entry) or ""
+                    except Exception:
+                        _name = ""
+                    greeting = check_in(_name or "Mahesh")
+                    if greeting:
+                        self.speak(greeting)
+                    start_monitoring()
+                    start_alert_monitoring()
+                    start_routine_scheduler()
+                    notif_brief = briefing()
+                    self.ui.write_log(notif_brief)
 
-                    tg.create_task(self._send_realtime())
-                    tg.create_task(self._listen_audio())
-                    tg.create_task(self._receive_audio())
-                    tg.create_task(self._play_audio())
+                    # Life briefing: habits, focus, finance
+                    try:
+                        life_brief = life_briefing()
+                        self.ui.write_log(life_brief)
+                        self.speak("Here is your life briefing, sir. " + life_brief.replace("\n", ". "))
+                    except Exception as e:
+                        print(f"[JARVIS] Life briefing failed: {e}")
+
+                    # Surface routines that fired while JARVIS was offline
+                    try:
+                        for alert in pop_routine_alerts():
+                            self.ui.write_log(f"Routine: {alert['message']}")
+                            self.speak(f"Routine reminder, sir. {alert['message']}")
+                    except Exception:
+                        pass
+
+                    tasks = [
+                        asyncio.create_task(self._send_realtime()),
+                        asyncio.create_task(self._listen_audio()),
+                        asyncio.create_task(self._receive_audio()),
+                        asyncio.create_task(self._play_audio()),
+                        asyncio.create_task(self._watch_routines()),
+                    ]
+                    try:
+                        await asyncio.gather(*tasks)
+                    finally:
+                        for t in tasks:
+                            t.cancel()
+                        await asyncio.gather(*tasks, return_exceptions=True)
 
             except Exception as e:
                 print(f"[JARVIS] ⚠️  Error: {e}")
+                self.ui.jarvis_think("err", f"connection: {e}")
                 traceback.print_exc()
 
             print("[JARVIS] 🔄 Reconnecting in 3s...")

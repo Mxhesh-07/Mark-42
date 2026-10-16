@@ -4,7 +4,6 @@
 import shutil
 from pathlib import Path
 from datetime import datetime
-import send2trash
 
 def _get_desktop() -> Path:
     """Returns desktop path — works on Windows, Mac, Linux."""
@@ -106,6 +105,7 @@ def delete_file(path: str, confirm: bool = True) -> str:
             return f"Not found: {path}"
 
         try:
+            import send2trash
 
             send2trash.send2trash(str(target))
             return f"Moved to Recycle Bin: {target.name}"

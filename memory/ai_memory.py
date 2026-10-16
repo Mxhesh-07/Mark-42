@@ -1,29 +1,47 @@
 import json
 from pathlib import Path
 
+BASE_DIR = Path(__file__).resolve().parent.parent
+
+
+def _default_data() -> dict:
+    return {
+        "user": {},
+        "preferences": [],
+        "projects": [],
+        "notes": []
+    }
+
 
 class AIMemory:
     def __init__(self):
-        self.memory_file = Path("memory/memories.json")
+        # Resolve against the project root, not the current working
+        # directory, so JARVIS launched from elsewhere still finds it.
+        self.memory_file = BASE_DIR / "memory" / "memories.json"
 
-        self.data = {
-            "user": {},
-            "preferences": [],
-            "projects": [],
-            "notes": []
-        }
+        self.data = _default_data()
 
         self.load()
+
+    @staticmethod
+    def _with_defaults(data):
+        if not isinstance(data, dict):
+            return _default_data()
+        for key in _default_data():
+            if key not in data:
+                data[key] = _default_data()[key]
+        return data
 
     def load(self):
         if self.memory_file.exists():
             try:
                 with open(self.memory_file, "r", encoding="utf-8") as f:
-                    self.data = json.load(f)
-            except:
+                    self.data = self._with_defaults(json.load(f))
+            except Exception:
                 pass
 
     def save(self):
+        self.memory_file.parent.mkdir(parents=True, exist_ok=True)
         with open(self.memory_file, "w", encoding="utf-8") as f:
             json.dump(self.data, f, indent=4)
 

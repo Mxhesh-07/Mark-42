@@ -402,8 +402,15 @@ def desktop_control(
         else:
             full_task = task or action
             if full_task:
-                code   = _ask_gemini_for_desktop_action(full_task)
-                result = _execute_generated_code(code) if code not in ("UNSAFE",) else "Cannot do that safely."
+                code = _ask_gemini_for_desktop_action(full_task)
+
+                if code == "UNSAFE":
+                    result = "I cannot perform that desktop action safely, sir."
+                elif code.startswith("ERROR:"):
+                    result = f"Could not generate action: {code}"
+                else:
+                    print(f"[Desktop] ✅ Generated code:\n{code[:200]}")
+                    result = _execute_generated_code(code)
             else:
                 result = "No action or task specified."
 

@@ -12,6 +12,23 @@ try:
 except ImportError:
     _PSUTIL = False
 
+# Desktop awareness lives at the project root (system_state.py).
+try:
+    from system_state import is_app_open, focus_window
+    _STATE = True
+except Exception:
+    try:
+        from actions.system_state import is_app_open, focus_window  # type: ignore
+        _STATE = True
+    except Exception:
+        _STATE = False
+
+        def is_app_open(hint: str) -> bool:  # type: ignore
+            return False
+
+        def focus_window(hint: str) -> bool:  # type: ignore
+            return False
+
 _APP_ALIASES = {
     "whatsapp":           {"Windows": "WhatsApp",               "Darwin": "WhatsApp",            "Linux": "whatsapp"},
     "chrome":             {"Windows": "chrome",                 "Darwin": "Google Chrome",       "Linux": "google-chrome"},
@@ -64,13 +81,26 @@ def _normalize(raw: str) -> str:
 
 
 def _is_running(app_name: str) -> bool:
+    """True if the app already has a visible window (preferred) or a matching process."""
+    # Window-title match first: catches apps whose process name is generic
+    # (e.g. LinkedIn running inside msedge, or UWP apps under ApplicationFrameHost).
+    if _STATE:
+        try:
+            if is_app_open(app_name):
+                return True
+        except Exception:
+            pass
     if not _PSUTIL:
-        return True
+        return False
     app_lower = app_name.lower().replace(" ", "").replace(".exe", "")
+    if not app_lower:
+        return False
     try:
         for proc in psutil.process_iter(["name"]):
             try:
                 proc_name = proc.info["name"].lower().replace(" ", "").replace(".exe", "")
+                if not proc_name:
+                    continue
                 if app_lower in proc_name or proc_name in app_lower:
                     return True
             except (psutil.NoSuchProcess, psutil.AccessDenied):
@@ -182,6 +212,33 @@ def open_app(
         return f"Unsupported OS: {system}"
 
     normalized = _normalize(app_name)
+
+    # ── Already open? Focus it instead of spawning a duplicate window. ──
+    already_open = False
+    try:
+        already_open = _is_running(normalized) or (
+            normalized != app_name and _is_running(app_name)
+        )
+    except Exception:
+        already_open = False
+
+    if already_open:
+        focused = False
+        try:
+            focused = focus_window(normalized) or focus_window(app_name)
+        except Exception:
+            focused = False
+
+        print(
+            f"[open_app] ♻️ Already open: {app_name} "
+            f"(focus={'ok' if focused else 'best-effort'})"
+        )
+        if player:
+            player.write_log(f"[open_app] {app_name} (already open)")
+        if focused:
+            return f"{app_name} is already open, sir — I've brought it to the front."
+        return f"{app_name} is already running, sir — no need to open it again."
+
     print(f"[open_app] 🚀 Launching: {app_name} → {normalized} ({system})")
 
     if player:

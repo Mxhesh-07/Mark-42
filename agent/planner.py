@@ -14,6 +14,15 @@ BASE_DIR        = get_base_dir()
 API_CONFIG_PATH = BASE_DIR / "config" / "api_keys.json"
 
 
+def _think(kind: str, text: str) -> None:
+    """Best-effort feed to the THINKING pane (the UI may not be loaded)."""
+    try:
+        from ui import jarvis_think
+        jarvis_think(kind, text)
+    except Exception:
+        pass
+
+
 PLANNER_PROMPT = """You are the planning module of MARK XXV, a personal AI assistant.
 Your job: break any user goal into a sequence of steps using ONLY the tools listed below.
 
@@ -164,52 +173,160 @@ def _get_api_key() -> str:
         return json.load(f)["gemini_api_key"]
 
 
-def create_plan(goal: str, context: str = "") -> dict:
-    import google.generativeai as genai
+PLANNER_MODEL = "gemini-2.5-flash-lite"
 
-    genai.configure(api_key=_get_api_key())
-    model = genai.GenerativeModel(
-        model_name="gemini-2.5-flash-lite",
-        system_instruction=PLANNER_PROMPT
+_client_cache = None
+
+
+def _client():
+    """
+    Cached google-genai client.
+
+    Creating a client per call and using it inline let it be garbage-collected
+    mid-request → "Cannot send a request, as the client has been closed".
+    """
+    global _client_cache
+    if _client_cache is None:
+        from google import genai
+        _client_cache = genai.Client(api_key=_get_api_key())
+    return _client_cache
+
+
+def _extract_json(text: str) -> dict:
+    """Pull the JSON object out of a model reply (tolerates fences/preamble)."""
+    text = (text or "").strip()
+    text = re.sub(r"```(?:json)?", "", text).strip().rstrip("`").strip()
+    start, end = text.find("{"), text.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        text = text[start:end + 1]
+    return json.loads(text)
+
+
+def _generate_json(prompt: str, system_instruction: str) -> dict:
+    """
+    Ask Gemini for a strict JSON object.
+
+    Uses the current google-genai SDK with response_mime_type=application/json
+    and thinking disabled. The old SDK + thinking model was returning an empty
+    text part, which made the JSON parse fail every time.
+    """
+    from google.genai import types
+
+    config_kwargs: dict = {
+        "system_instruction": system_instruction,
+        "response_mime_type": "application/json",
+    }
+    try:
+        config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=0)
+    except Exception:
+        pass
+
+    client = _client()
+    response = client.models.generate_content(
+        model=PLANNER_MODEL,
+        contents=prompt,
+        config=types.GenerateContentConfig(**config_kwargs),
     )
+    return _extract_json(getattr(response, "text", "") or "")
 
+
+def _sanitize_plan(plan: dict, goal: str) -> dict:
+    """Validate structure and replace unsupported tools."""
+    if not isinstance(plan, dict) or not isinstance(plan.get("steps"), list):
+        raise ValueError("Invalid plan structure")
+
+    for i, step in enumerate(plan["steps"], start=1):
+        if not isinstance(step, dict):
+            raise ValueError("Invalid step in plan")
+        step.setdefault("step", i)
+        if step.get("tool") in (None, "", "generated_code"):
+            print(f"[Planner] ⚠️ step {step.get('step')} has unsupported tool "
+                  f"'{step.get('tool')}' — replacing with web_search")
+            desc = step.get("description", goal)
+            step["tool"] = "web_search"
+            step["parameters"] = {"query": desc[:200]}
+
+    return plan
+
+
+def create_plan(goal: str, context: str = "") -> dict:
     user_input = f"Goal: {goal}"
     if context:
         user_input += f"\n\nContext: {context}"
 
     try:
-        response = model.generate_content(user_input)
-        text     = response.text.strip()
-        text     = re.sub(r"```(?:json)?", "", text).strip().rstrip("`").strip()
-
-        plan = json.loads(text)
-
-        if "steps" not in plan or not isinstance(plan["steps"], list):
-            raise ValueError("Invalid plan structure")
-
-        for step in plan["steps"]:
-            if step.get("tool") in ("generated_code",):
-                print(f"[Planner] ⚠️ generated_code detected in step {step.get('step')} — replacing with web_search")
-                desc = step.get("description", goal)
-                step["tool"] = "web_search"
-                step["parameters"] = {"query": desc[:200]}
+        plan = _sanitize_plan(_generate_json(user_input, PLANNER_PROMPT), goal)
 
         print(f"[Planner] ✅ Plan: {len(plan['steps'])} steps")
+        _think("sys", f"plan built — {len(plan['steps'])} steps")
         for s in plan["steps"]:
             print(f"  Step {s['step']}: [{s['tool']}] {s['description']}")
+            _think("sys", f"plan ▸ step {s.get('step', '?')} "
+                          f"[{s.get('tool', '?')}] {s.get('description', '')[:80]}")
 
         return plan
 
     except json.JSONDecodeError as e:
         print(f"[Planner] ⚠️ JSON parse failed: {e}")
+        _think("err", f"plan JSON parse failed: {e}")
         return _fallback_plan(goal)
     except Exception as e:
         print(f"[Planner] ⚠️ Planning failed: {e}")
+        _think("err", f"planning failed: {e}")
         return _fallback_plan(goal)
 
 
+_BROWSE_HINTS = (
+    "navigate", "browse", "website", "web page", "webpage", "url", "online",
+    "linkedin", "instagram", "facebook", "youtube", "amazon", "flipkart",
+    "github", "twitter", "google", ".com", ".in", ".org", ".net",
+)
+_OPEN_HINTS = ("open ", "launch ", "start ")
+
+
 def _fallback_plan(goal: str) -> dict:
+    """
+    Last-resort single-step plan.
+
+    Picks a tool from the goal text instead of blindly web_search-ing
+    everything — searching a "navigate/open X" goal just makes the search
+    model reply with a refusal, which then looked like success.
+    """
     print("[Planner] 🔄 Fallback plan")
+    g = (goal or "").lower()
+    stripped = goal.strip()
+
+    if any(h in g for h in _BROWSE_HINTS):
+        query = re.sub(
+            r"^(please\s+)?(navigate to|go to|open|browse|search for|find)\s+",
+            "", stripped, flags=re.IGNORECASE
+        ).strip() or stripped
+        return {
+            "goal": goal,
+            "steps": [{
+                "step": 1,
+                "tool": "browser_control",
+                "description": f"Open a browser and search for: {query}",
+                "parameters": {"action": "search", "query": query[:180]},
+                "critical": True,
+            }],
+        }
+
+    if g.startswith(_OPEN_HINTS) or "open the app" in g:
+        app_name = re.sub(
+            r"^(please\s+)?(open|launch|start)\s+", "", stripped, flags=re.IGNORECASE
+        ).strip() or stripped
+        return {
+            "goal": goal,
+            "steps": [{
+                "step": 1,
+                "tool": "open_app",
+                "description": f"Open {app_name}",
+                "parameters": {"app_name": app_name[:60]},
+                "critical": True,
+            }],
+        }
+
     return {
         "goal": goal,
         "steps": [
@@ -225,17 +342,13 @@ def _fallback_plan(goal: str) -> dict:
 
 
 def replan(goal: str, completed_steps: list, failed_step: dict, error: str) -> dict:
-    import google.generativeai as genai
-
-    genai.configure(api_key=_get_api_key())
-    model = genai.GenerativeModel(
-        model_name="gemini-2.5-flash",
-        system_instruction=PLANNER_PROMPT
-    )
-
-    completed_summary = "\n".join(
-        f"  - Step {s['step']} ({s['tool']}): DONE" for s in completed_steps
-    )
+    try:
+        completed_summary = "\n".join(
+            f"  - Step {s.get('step', '')} ({s.get('tool', '')}): DONE" for s in completed_steps
+        )
+    except Exception as e:
+        print(f"[Planner] ⚠️ Failed to build completed summary: {e}")
+        completed_summary = ""
 
     prompt = f"""Goal: {goal}
 
@@ -248,19 +361,15 @@ Error: {error}
 Create a REVISED plan for the remaining work only. Do not repeat completed steps."""
 
     try:
-        response = model.generate_content(prompt)
-        text     = response.text.strip()
-        text     = re.sub(r"```(?:json)?", "", text).strip().rstrip("`").strip()
-        plan     = json.loads(text)
-
-        # generated_code kontrolü
-        for step in plan.get("steps", []):
-            if step.get("tool") == "generated_code":
-                step["tool"] = "web_search"
-                step["parameters"] = {"query": step.get("description", goal)[:200]}
+        plan = _sanitize_plan(_generate_json(prompt, PLANNER_PROMPT), goal)
 
         print(f"[Planner] 🔄 Revised plan: {len(plan['steps'])} steps")
+        _think("sys", f"replan after failure → {len(plan['steps'])} steps")
+        for s in plan["steps"]:
+            _think("sys", f"plan ▸ step {s.get('step', '?')} "
+                          f"[{s.get('tool', '?')}] {s.get('description', '')[:80]}")
         return plan
     except Exception as e:
         print(f"[Planner] ⚠️ Replan failed: {e}")
+        _think("err", f"replan failed: {e}")
         return _fallback_plan(goal)
