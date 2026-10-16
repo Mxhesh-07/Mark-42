@@ -1,0 +1,59 @@
+{
+  "_comment": [
+    "Tier-2 fallback providers, used ONLY when every Gemini model is exhausted",
+    "AND the request is plain text (no image input, no google_search grounding).",
+    "Tried in the order listed below.",
+    "",
+    "Per provider:",
+    "  base_url      OpenAI-compatible root; '/chat/completions' is appended.",
+    "  key_env       env var holding the key (checked first).",
+    "  key_field     field in config/api_keys.json (checked second).",
+    "  requires_key  set false for a local server that needs no key (default true).",
+    "  discover      set true to auto-list models from GET {base_url}/models",
+    "                instead of trusting the 'models' list (default false).",
+    "  timeout       per-request seconds (default 60; local models are slower).",
+    "  models        tried in order; ignored when discover is true.",
+    "",
+    "Get a free key (paste into config/api_keys.json, or set the env var):",
+    "  groq        -> https://console.groq.com        (free, no card, 1000 req/day)",
+    "  openrouter  -> https://openrouter.ai/keys      (free, no card, 50 req/day)",
+    "",
+    "Model IDs change often (Groq retired its Llama models in Aug 2026), so edit",
+    "the 'models' lists here instead of touching code."
+  ],
+  "openai_compatible": [
+    {
+      "id": "groq",
+      "name": "Groq",
+      "base_url": "https://api.groq.com/openai/v1",
+      "key_env": "GROQ_API_KEY",
+      "key_field": "groq_api_key",
+      "models": [
+        "openai/gpt-oss-120b",
+        "qwen/qwen3.8-27b",
+        "openai/gpt-oss-20b"
+      ]
+    },
+    {
+      "id": "openrouter",
+      "name": "OpenRouter",
+      "base_url": "https://openrouter.ai/api/v1",
+      "key_env": "OPENROUTER_API_KEY",
+      "key_field": "openrouter_api_key",
+      "models": [
+        "nvidia/nemotron-3-super-120b-a12b:free",
+        "cohere/north-mini-code:free",
+        "openrouter/free"
+      ]
+    },
+    {
+      "id": "ollama",
+      "name": "Ollama (local, offline, no key, no quota)",
+      "base_url": "http://127.0.0.1:11434/v1",
+      "requires_key": false,
+      "discover": true,
+      "timeout": 180,
+      "models": []
+    }
+  ]
+}
