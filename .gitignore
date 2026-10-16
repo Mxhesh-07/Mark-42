@@ -17,6 +17,7 @@ config/email_config.json
 config/alert_config.json
 config/spotify_config.json
 .spotify_cache
+.cache
 .env
 *.pem
 
