@@ -80,30 +80,30 @@ def respond_with_emotion(emotion: str, base_response: str = "") -> str:
     if emotion == "happy":
         prefix = random.choice([
             "That's wonderful to hear. ",
-            "Excellent news, sir. ",
+            "Excellent news. ",
             "You seem cheerful today. ",
         ])
     elif emotion == "sad":
         prefix = random.choice([
             "I'm sorry to hear that. ",
-            "Rough day, sir? ",
+            "Rough day? ",
             "Things will get better. ",
         ])
     elif emotion == "angry":
         prefix = random.choice([
-            "I understand your frustration, sir. ",
+            "I understand your frustration. ",
             "Let's work through this calmly. ",
             "I'll sort it out for you. ",
         ])
     elif emotion == "stressed":
         prefix = random.choice([
-            "Take a breath, sir. ",
+            "Take a breath. ",
             "One thing at a time. ",
             "Let me handle the heavy lifting. ",
         ])
     elif emotion == "excited":
         prefix = random.choice([
-            "Your enthusiasm is infectious, sir. ",
+            "Your enthusiasm is infectious. ",
             "This is exciting! ",
             "I share your excitement. ",
         ])
@@ -158,8 +158,8 @@ def get_recent_experiences(limit: int = 5) -> list:
 def personal_joke() -> str:
     """Return a personality-driven joke."""
     jokes = [
-        "I would tell you a joke about my neural network, but I'm afraid it wouldn't compute properly, sir.",
-        "Why did the AI go to therapy? Too many unresolved loops, sir.",
+        "I would tell you a joke about my neural network, but I'm afraid it wouldn't compute properly.",
+        "Why did the AI go to therapy? Too many unresolved loops.",
         "My favorite type of humor? Binary — either it works or it doesn't.",
         "I attempted stand-up comedy once. My timing was impeccable, but my delivery was too systematic.",
         "They say I have no sense of humor. I told them that's not funny.",
@@ -185,13 +185,13 @@ def companion_response(context: dict) -> str:
         experiences = get_recent_experiences(3)
         if experiences:
             exp_text = ", ".join(e["description"][:50] for e in experiences[-2:])
-            return f"Last time we chatted about: {exp_text}, sir."
+            return f"Last time we chatted about: {exp_text}."
 
     if "how are you" in text.lower():
         responses = [
             f"Running at peak efficiency, as always. More importantly — how are you, {user_name}?",
-            f"All systems nominal, sir. But I'm more interested in how your day is going.",
-            f"Excellent, now that you're here, sir. What can I do for you?",
+            f"All systems nominal. But I'm more interested in how your day is going.",
+            f"Excellent, now that you're here. What can I do for you?",
         ]
         return random.choice(responses)
 

@@ -5,6 +5,13 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Callable, Any
 
+from agent import task_store
+
+
+# Re-queue tasks that were still pending/running when the process last stopped,
+# so an interrupted task resumes instead of vanishing. Set False to disable.
+RESTORE_INTERRUPTED = True
+
 
 def _think(kind: str, text: str) -> None:
     """Best-effort feed to the THINKING pane (the UI may not be loaded)."""
@@ -72,6 +79,27 @@ class TaskQueue:
         )
         self._worker_thread.start()
         print("[TaskQueue] ✅ Started")
+        self._restore_interrupted()
+
+    def _restore_interrupted(self) -> None:
+        """Re-queue tasks that were pending/running when the process last stopped."""
+        if not RESTORE_INTERRUPTED:
+            return
+        try:
+            records = task_store.resumable()
+        except Exception as e:
+            print(f"[TaskQueue] ⚠️ Could not restore tasks: {e}")
+            return
+        if not records:
+            return
+
+        print(f"[TaskQueue] ♻️ Restoring {len(records)} interrupted task(s)")
+        for rec in records:
+            goal = rec.get("goal")
+            if not goal:
+                continue
+            task_store.mark_interrupted(rec["task_id"])
+            self.submit(goal, task_id=rec["task_id"], resumed=True)
 
     def stop(self) -> None:
         self._running = False
@@ -85,9 +113,40 @@ class TaskQueue:
         priority:    TaskPriority = TaskPriority.NORMAL,
         speak:       Callable | None = None,
         on_complete: Callable | None = None,
+        task_id:     str | None = None,
+        resumed:     bool = False,
     ) -> str:
 
-        task_id = str(uuid.uuid4())[:8]
+        task_id = task_id or str(uuid.uuid4())[:8]
+
+        # Kill switch: refuse to accept new work while it is engaged.
+        try:
+            from agent import policy
+            if policy.kill_requested():
+                print(f"[TaskQueue] 🛑 Kill switch engaged — refusing task: {goal[:60]}")
+                _think("err", "kill switch engaged — refused new task")
+                return ""
+        except Exception:
+            pass
+
+        # Rate limit: at most `max_tasks_per_hour` background tasks per hour.
+        try:
+            from agent import policy, audit
+            cap = int(policy.limits().get("max_tasks_per_hour", 0) or 0)
+            if cap > 0:
+                cutoff = time.time() - 3600
+                recent = sum(1 for r in task_store.all_tasks()
+                             if r.get("created", 0) >= cutoff)
+                if recent >= cap:
+                    print(f"[TaskQueue] ⏳ Rate limit reached ({recent}/{cap} tasks/hour) "
+                          f"— refusing: {goal[:50]}")
+                    audit.record("task_start", outcome="blocked", goal=goal,
+                                 detail=f"rate limit {recent}/{cap} per hour")
+                    _think("err", f"rate limit {recent}/{cap} tasks/hour — refused")
+                    return ""
+        except Exception:
+            pass
+
         task    = Task(
             priority    = priority.value,
             created_at  = time.time(),
@@ -103,7 +162,19 @@ class TaskQueue:
             self._tasks[task_id] = task
             self._condition.notify()
 
-        print(f"[TaskQueue] 📥 Task queued: [{task_id}] {goal[:60]}")
+        try:
+            task_store.upsert(
+                task_id,
+                goal=goal,
+                status="pending",
+                priority=priority.name,
+                resumed=resumed,
+            )
+        except Exception as e:
+            print(f"[TaskQueue] ⚠️ Could not persist task: {e}")
+
+        label = "resumed task" if resumed else "Task queued"
+        print(f"[TaskQueue] 📥 {label}: [{task_id}] {goal[:60]}")
         _think("sys", f"queued background task [{task_id}]: {goal[:60]}")
         return task_id
 
@@ -124,6 +195,10 @@ class TaskQueue:
                 pass
             self._condition.notify()
             print(f"[TaskQueue] 🚫 Task cancelled: [{task_id}]")
+            try:
+                task_store.set_status(task_id, "cancelled")
+            except Exception:
+                pass
             return True
 
     def get_status(self, task_id: str) -> dict | None:
@@ -195,7 +270,12 @@ class TaskQueue:
         print(f"[TaskQueue] ▶️ Running: [{task.task_id}] {task.goal[:60]}")
         _think("tool", f"[{task.task_id}] {task.goal[:60]}")
         try:
-            executor = self._get_executor()
+            task_store.set_status(task.task_id, "running")
+        except Exception:
+            pass
+        try:
+            from agent.executor import AgentExecutor
+            executor = AgentExecutor(task_id=task.task_id)
             result   = executor.execute(
                 goal        = task.goal,
                 speak       = task.speak,
@@ -209,6 +289,15 @@ class TaskQueue:
                     task.status = TaskStatus.COMPLETED
                     task.result = result
                 self._active_count -= 1
+
+            try:
+                if task.cancel_flag.is_set():
+                    task_store.set_status(task.task_id, "cancelled")
+                else:
+                    task_store.set_status(task.task_id, "completed",
+                                          result=str(result)[:2000])
+            except Exception as e:
+                print(f"[TaskQueue] ⚠️ Could not persist result: {e}")
 
             if task.on_complete and not task.cancel_flag.is_set():
                 try:
@@ -224,6 +313,10 @@ class TaskQueue:
                 task.status = TaskStatus.FAILED
                 task.error  = str(e)
                 self._active_count -= 1
+            try:
+                task_store.set_status(task.task_id, "failed", error=str(e)[:2000])
+            except Exception:
+                pass
             print(f"[TaskQueue] ❌ Failed: [{task.task_id}] {e}")
             _think("err", f"[{task.task_id}] task failed: {e}")
 

@@ -196,7 +196,7 @@ def cmd_control(
     visible = (parameters or {}).get("visible", True)
 
     if not task and not command:
-        return "Please describe what you want to do, sir."
+        return "Please describe what you want to do."
 
     if not command:
         command = _find_hardcoded(task)
@@ -207,7 +207,7 @@ def cmd_control(
             command = _ask_gemini(task)
             print(f"[CMD] ✅ Generated: {command[:80]}")
             if command == "UNSAFE":
-                return "I cannot generate a safe command for that request, sir."
+                return "I cannot generate a safe command for that request."
             if command.startswith("ERROR:"):
                 return f"Could not generate command: {command}"
 

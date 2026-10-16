@@ -23,8 +23,17 @@ def _think(kind: str, text: str) -> None:
         pass
 
 
-PLANNER_PROMPT = """You are the planning module of MARK XXV, a personal AI assistant.
+PLANNER_PROMPT = """You are the planning module of JARVIS (MARK-42), a personal AI assistant.
 Your job: break any user goal into a sequence of steps using ONLY the tools listed below.
+
+THINK BEFORE YOU WRITE:
+- First decide what "done" actually looks like for this goal, then choose the
+  fewest steps that truly get there. Never pad the list.
+- Each step must be doable with what exists at the moment it runs; order them so
+  the plan never depends on something a later step produces.
+- If the goal is a single action, return exactly ONE step.
+- Only add a save/open step when the user asked for a file or an artifact.
+- Never invent tools, parameters or values that are not listed below.
 
 ABSOLUTE RULES:
 - NEVER use generated_code or write Python scripts. It does not exist.
@@ -173,7 +182,15 @@ def _get_api_key() -> str:
         return json.load(f)["gemini_api_key"]
 
 
-PLANNER_MODEL = "gemini-2.5-flash-lite"
+PLANNER_MODEL = "gemini-2.5-flash"
+
+# Reasoning budget for the planner. gemini-2.5-flash-lite is deliberately NOT
+# used any more: it is the model this project's key exhausts first (429), and a
+# plan is a one-shot reasoning task where quality matters more than latency.
+# 0 = no reasoning (old behaviour); >0 = think first; -1 = let the model decide.
+# Verified: with thinking on, gemini-2.5-flash still returns strict JSON, and
+# produced a tighter plan than budget=0.
+PLANNER_THINKING_BUDGET = 4096
 
 _client_cache = None
 
@@ -207,8 +224,10 @@ def _generate_json(prompt: str, system_instruction: str) -> dict:
     Ask Gemini for a strict JSON object.
 
     Uses the current google-genai SDK with response_mime_type=application/json
-    and thinking disabled. The old SDK + thinking model was returning an empty
-    text part, which made the JSON parse fail every time.
+    and reasoning enabled (PLANNER_THINKING_BUDGET). The old SDK + thinking model
+    returned an empty text part, which is why thinking used to be disabled; on
+    the new SDK it is verified to return parseable JSON, so the planner thinks
+    again.
     """
     from google.genai import types
 
@@ -217,7 +236,9 @@ def _generate_json(prompt: str, system_instruction: str) -> dict:
         "response_mime_type": "application/json",
     }
     try:
-        config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=0)
+        config_kwargs["thinking_config"] = types.ThinkingConfig(
+            thinking_budget=PLANNER_THINKING_BUDGET
+        )
     except Exception:
         pass
 

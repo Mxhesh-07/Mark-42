@@ -383,7 +383,7 @@ def desktop_control(
         elif action == "task" or task:
             actual_task = task or parameters.get("description", "")
             if not actual_task:
-                return "Please describe what you want to do on the desktop, sir."
+                return "Please describe what you want to do on the desktop."
 
             print(f"[Desktop] 🤖 Asking Gemini: {actual_task}")
             if player:
@@ -392,7 +392,7 @@ def desktop_control(
             code = _ask_gemini_for_desktop_action(actual_task)
 
             if code == "UNSAFE":
-                result = "I cannot perform that desktop action safely, sir."
+                result = "I cannot perform that desktop action safely."
             elif code.startswith("ERROR:"):
                 result = f"Could not generate action: {code}"
             else:
@@ -405,7 +405,7 @@ def desktop_control(
                 code = _ask_gemini_for_desktop_action(full_task)
 
                 if code == "UNSAFE":
-                    result = "I cannot perform that desktop action safely, sir."
+                    result = "I cannot perform that desktop action safely."
                 elif code.startswith("ERROR:"):
                     result = f"Could not generate action: {code}"
                 else:

@@ -222,7 +222,7 @@ def end_focus() -> dict:
     data = _load_data()
     active = data.get("active_focus")
     if not active:
-        return {"status": "none", "message": "No focus session running, sir."}
+        return {"status": "none", "message": "No focus session running."}
 
     started = datetime.fromisoformat(active["started"])
     elapsed = (datetime.now() - started).total_seconds() / 60.0
@@ -250,7 +250,7 @@ def end_focus() -> dict:
         "status": "ended",
         "task": session["task"],
         "minutes": session["actual_minutes"],
-        "message": f"Focus session ended — {session['actual_minutes']} minutes on {session['task']}. Take a break, sir.",
+        "message": f"Focus session ended — {session['actual_minutes']} minutes on {session['task']}. Take a break.",
     }
 
 
@@ -423,7 +423,7 @@ def stop_meeting_recording(transcript: str = "") -> dict:
     data = _load_data()
     active = data.get("active_recording")
     if not active:
-        return {"status": "none", "message": "No meeting recording in progress, sir."}
+        return {"status": "none", "message": "No meeting recording in progress."}
 
     summary = _summarize_text(transcript) if transcript else None
     rec = {
@@ -727,7 +727,7 @@ def life_briefing() -> str:
     if at_risk:
         lines.append("Habits pending today: " + ", ".join(h["name"] for h in at_risk))
     else:
-        lines.append("All habits done today. Well done, sir.")
+        lines.append("All habits done today. Well done.")
 
     f = get_focus_stats()
     lines.append(f"Focus: {f['minutes_today']} min today ({f['sessions_today']} sessions).")

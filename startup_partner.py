@@ -295,10 +295,10 @@ def startup_dashboard() -> dict:
 def strategy_prompt(topic: str) -> str:
     """Generate a strategic thinking prompt."""
     prompts = {
-        "general": "Think about market fit, competitive advantage, and scalability, sir.",
-        "fundraising": "Consider traction metrics, market size, and use of funds, sir.",
-        "product": "Focus on user pain points, differentiation, and roadmap, sir.",
-        "hiring": "Think about culture fit, equity distribution, and role clarity, sir.",
-        "competition": "Analyze strengths, weaknesses, and positioning, sir.",
+        "general": "Think about market fit, competitive advantage, and scalability.",
+        "fundraising": "Consider traction metrics, market size, and use of funds.",
+        "product": "Focus on user pain points, differentiation, and roadmap.",
+        "hiring": "Think about culture fit, equity distribution, and role clarity.",
+        "competition": "Analyze strengths, weaknesses, and positioning.",
     }
     return prompts.get(topic, prompts["general"])

@@ -455,7 +455,7 @@ def computer_control(
     action = (parameters or {}).get("action", "").lower().strip()
 
     if not action:
-        return "Please specify an action for computer_control, sir."
+        return "Please specify an action for computer_control."
 
     if player:
         player.write_log(f"[Computer] {action}")

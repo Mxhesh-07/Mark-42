@@ -127,6 +127,26 @@ ECHO_GUARD_TAIL_S = 0.55
 VAD_TUNING     = True
 VAD_SILENCE_MS = 600   # pause length that ends your turn
 
+# --- cognitive / character tuning (Live model) -------------------------------
+# These shape how JARVIS thinks and answers, not just what he says.
+#
+# Probed live against LIVE_MODEL: thinking, affective dialog and context-window
+# compression are all ACCEPTED; 'proactivity' is REJECTED as an unknown field
+# ("Unknown name \"proactivity\" at 'setup'"), so it is deliberately not set here.
+#
+#   THINKING_BUDGET  >0 = reason before answering (deeper, slightly slower).
+#                      0  = answer instantly (old behaviour).
+#   AFFECTIVE_DIALOG    = read the user's tone and answer the person, not just
+#                         the words (mood-aware delivery).
+#   CTX_*               = compress long sessions instead of forgetting the start.
+#   LIVE_TEMPERATURE    = a little warmth/variety in wording. Too high = flaky
+#                         and over-familiar; ~0.85 is expressive but sane.
+THINKING_BUDGET    = 512
+AFFECTIVE_DIALOG   = True
+CTX_TRIGGER_TOKENS = 100000
+CTX_TARGET_TOKENS  = 80000
+LIVE_TEMPERATURE   = 0.85
+
 pya = pyaudio.PyAudio()
 
 def _get_api_key() -> str:
@@ -957,6 +977,26 @@ class JarvisLive:
                 )
             )
 
+        # Cognitive settings (see THINKING_BUDGET / AFFECTIVE_DIALOG / CTX_*).
+        # 'proactivity' is intentionally absent — this model rejects the field.
+        cognition_kwargs = {}
+        if THINKING_BUDGET and THINKING_BUDGET > 0:
+            cognition_kwargs["thinking_config"] = types.ThinkingConfig(
+                thinking_budget=THINKING_BUDGET
+            )
+        if AFFECTIVE_DIALOG:
+            cognition_kwargs["enable_affective_dialog"] = True
+        if CTX_TRIGGER_TOKENS and CTX_TARGET_TOKENS:
+            cognition_kwargs["context_window_compression"] = (
+                types.ContextWindowCompressionConfig(
+                    trigger_tokens=CTX_TRIGGER_TOKENS,
+                    sliding_window=types.SlidingWindow(
+                        target_tokens=CTX_TARGET_TOKENS
+                    ),
+                )
+            )
+        cognition_kwargs["temperature"] = LIVE_TEMPERATURE
+
         return types.LiveConnectConfig(
             response_modalities=["AUDIO"],
             output_audio_transcription={},
@@ -965,6 +1005,7 @@ class JarvisLive:
             tools=[{"function_declarations": TOOL_DECLARATIONS}],
             session_resumption=types.SessionResumptionConfig(),
             **vad_kwargs,
+            **cognition_kwargs,
             speech_config=types.SpeechConfig(
                 voice_config=types.VoiceConfig(
                     prebuilt_voice_config=types.PrebuiltVoiceConfig(
@@ -1094,7 +1135,7 @@ class JarvisLive:
                     raise ValueError("register_voice requires a 'name' parameter.")
                 voice_id = np.frombuffer(self._snapshot_mic_audio(), dtype=np.int16)
                 success = register_speaker(speaker_name, voice_id, sample_rate=SEND_SAMPLE_RATE)
-                result = f"Voice registered as '{speaker_name}', sir." if success else "Voice registration failed."
+                result = f"Voice registered as '{speaker_name}'." if success else "Voice registration failed."
 
             elif name == "business":
                 action = args.get("action", "")
@@ -1103,13 +1144,13 @@ class JarvisLive:
                     result = f"Event added: {e['title']} on {e['date']} at {e['time']}"
                 elif action == "calendar_today":
                     events = get_today_events()
-                    result = f"Today: {len(events)} events\n" + "\n".join(f"- {e['time']} {e['title']}" for e in events[:10]) if events else "No events today, sir."
+                    result = f"Today: {len(events)} events\n" + "\n".join(f"- {e['time']} {e['title']}" for e in events[:10]) if events else "No events today."
                 elif action == "calendar_list":
                     events = get_events(args.get("date", ""))
                     result = f"Events: {len(events)}\n" + "\n".join(f"- {e['date']} {e['time']} {e['title']}" for e in events[:10])
                 elif action == "calendar_delete":
                     ok = delete_event(args.get("id", "") or args.get("title", ""))
-                    result = "Event deleted, sir." if ok else "Event not found."
+                    result = "Event deleted." if ok else "Event not found."
                 elif action == "github_repos":
                     repos = get_github_repos()
                     result = f"Repos: {len(repos)}\n" + "\n".join(f"- {r['name']}: {r['url']}" for r in repos[:10])
@@ -1169,13 +1210,13 @@ class JarvisLive:
                     result = f"Automation created: {a['name']} ({len(a['actions'])} actions)"
                 elif action == "automation_list":
                     autos = get_automations()
-                    result = f"Automations: {len(autos)}\n" + "\n".join(f"- {a['id']} {a['name']} [{'on' if a['active'] else 'off'}]" for a in autos[:10]) if autos else "No automations, sir."
+                    result = f"Automations: {len(autos)}\n" + "\n".join(f"- {a['id']} {a['name']} [{'on' if a['active'] else 'off'}]" for a in autos[:10]) if autos else "No automations."
                 elif action == "automation_toggle":
                     ok = toggle_automation(args.get("id", ""))
-                    result = "Automation toggled, sir." if ok else "Automation not found."
+                    result = "Automation toggled." if ok else "Automation not found."
                 elif action == "automation_run":
                     r = run_automation(args.get("id", ""))
-                    result = f"Automation {r.get('automation', '')} {r['status']}, sir."
+                    result = f"Automation {r.get('automation', '')} {r['status']}."
                 elif action == "email_draft":
                     d = draft_email(args.get("to", ""), args.get("subject", ""), args.get("body", ""))
                     result = f"Draft saved (id {d['id']}) to {d['to']}, subject '{d['subject']}'."
@@ -1223,7 +1264,7 @@ class JarvisLive:
                     result = f"Clients: {len(clients)}\n" + "\n".join(f"- {c['name']} ({c['company']}) [{c['status']}]" for c in clients[:10])
                 elif action == "client_status":
                     ok = update_client_status(args.get("id", ""), args.get("status", ""))
-                    result = "Client status updated, sir." if ok else "Client not found or invalid status."
+                    result = "Client status updated." if ok else "Client not found or invalid status."
                 elif action == "deal_add":
                     d = add_deal(args.get("name", ""), args.get("title", ""), args.get("value", 0), args.get("stage", "lead"))
                     result = f"Deal added: {d['title']} for {d['client']} (₹{d['value']}) [{d['stage']}]"
@@ -1246,13 +1287,13 @@ class JarvisLive:
                     result = f"{h['name']} logged. Streak: {h['streak']} day(s), best {h['best_streak']}."
                 elif action == "habits":
                     hs = get_habits()
-                    result = "Habits:\n" + "\n".join(f"- {h['name']}: {h['streak']}d streak ({h['this_week']}/{h['target_per_week']} this week)" for h in hs) if hs else "No habits yet, sir."
+                    result = "Habits:\n" + "\n".join(f"- {h['name']}: {h['streak']}d streak ({h['this_week']}/{h['target_per_week']} this week)" for h in hs) if hs else "No habits yet."
                 elif action == "habit_status":
                     h = habit_status(args.get("name", ""))
                     result = f"{h['name']}: streak {h['streak']}, best {h['best_streak']}, done today: {h['done_today']}" if h else "Habit not found."
                 elif action == "habits_at_risk":
                     r = habits_at_risk()
-                    result = "Pending today: " + ", ".join(h["name"] for h in r) if r else "All habits done today, sir."
+                    result = "Pending today: " + ", ".join(h["name"] for h in r) if r else "All habits done today."
                 elif action == "focus_start":
                     f = start_focus(args.get("task", ""), args.get("minutes", 25))
                     result = f"Focus started: {f['task']} for {f['minutes']} minutes."
@@ -1268,19 +1309,19 @@ class JarvisLive:
                     result = f"Note saved: {n['title']} ({n['id']})"
                 elif action == "note_search":
                     res = search_notes(args.get("query", ""))
-                    result = f"Found {len(res)}:\n" + "\n".join(f"- {r.get('title','')}: {(r.get('content') or r.get('url',''))[:60]}" for r in res[:5]) if res else "Nothing found, sir."
+                    result = f"Found {len(res)}:\n" + "\n".join(f"- {r.get('title','')}: {(r.get('content') or r.get('url',''))[:60]}" for r in res[:5]) if res else "Nothing found."
                 elif action == "notes":
                     ns = get_notes(args.get("name") or None)
-                    result = f"Notes: {len(ns)}\n" + "\n".join(f"- {n['title']}" for n in ns[:10]) if ns else "No notes yet, sir."
+                    result = f"Notes: {len(ns)}\n" + "\n".join(f"- {n['title']}" for n in ns[:10]) if ns else "No notes yet."
                 elif action == "note_delete":
                     ok = delete_note(args.get("query", "") or args.get("title", ""))
-                    result = "Note deleted, sir." if ok else "Note not found."
+                    result = "Note deleted." if ok else "Note not found."
                 elif action == "link_add":
                     l = save_link(args.get("url", ""), args.get("title", ""), args.get("tags", []))
                     result = f"Link saved: {l['title']}"
                 elif action == "links":
                     ls = get_links(args.get("name") or None)
-                    result = f"Links: {len(ls)}\n" + "\n".join(f"- {l['title']}: {l['url']}" for l in ls[:10]) if ls else "No links saved, sir."
+                    result = f"Links: {len(ls)}\n" + "\n".join(f"- {l['title']}: {l['url']}" for l in ls[:10]) if ls else "No links saved."
                 elif action == "meeting_start":
                     m = start_meeting_recording(args.get("title", "Meeting"))
                     result = f"Recording meeting '{m['title']}'."
@@ -1302,19 +1343,19 @@ class JarvisLive:
                               "\nDecisions: " + "; ".join(s["decisions"][:5]))
                 elif action == "recordings":
                     rs = get_recordings()
-                    result = f"Recordings: {len(rs)}\n" + "\n".join(f"- {r['title']} ({r['ended'][:10]})" for r in rs[:10]) if rs else "No recordings, sir."
+                    result = f"Recordings: {len(rs)}\n" + "\n".join(f"- {r['title']} ({r['ended'][:10]})" for r in rs[:10]) if rs else "No recordings."
                 elif action == "routine_add":
                     r = add_routine(args.get("name", ""), args.get("time", ""), args.get("action_text", "") or args.get("name", ""), args.get("days"))
                     result = f"Routine set: {r['name']} at {r['time']}."
                 elif action == "routines":
                     rs = get_routines()
-                    result = "Routines:\n" + "\n".join(f"- {r['time']} {r['name']}" for r in rs) if rs else "No routines set, sir."
+                    result = "Routines:\n" + "\n".join(f"- {r['time']} {r['name']}" for r in rs) if rs else "No routines set."
                 elif action == "routine_remove":
                     ok = remove_routine(args.get("name", "") or args.get("id", ""))
-                    result = "Routine removed, sir." if ok else "Routine not found."
+                    result = "Routine removed." if ok else "Routine not found."
                 elif action == "routines_due":
                     fired = check_due_routines()
-                    result = "Fired: " + ", ".join(f["routine"] for f in fired) if fired else "No routines due right now, sir."
+                    result = "Fired: " + ", ".join(f["routine"] for f in fired) if fired else "No routines due right now."
                 elif action == "income_add":
                     i = add_income(args.get("amount", 0), args.get("source", ""), args.get("content", ""))
                     result = f"Income logged: \u20b9{i['amount']} from {i['source']}."
@@ -1323,7 +1364,7 @@ class JarvisLive:
                     result = f"Invoice added: {inv['client']} \u20b9{inv['amount']} [{inv['status']}], due {inv['due'] or 'n/a'}."
                 elif action == "invoice_status":
                     ok = update_invoice_status(args.get("client", "") or args.get("id", ""), args.get("status", ""))
-                    result = "Invoice status updated, sir." if ok else "Invoice not found."
+                    result = "Invoice status updated." if ok else "Invoice not found."
                 elif action == "asset_add":
                     a = add_asset(args.get("name", ""), args.get("amount", 0), args.get("kind", "asset"))
                     result = f"Asset added: {a['name']} \u20b9{a['value']}."
@@ -1350,43 +1391,43 @@ class JarvisLive:
                 try:
                     if action in ("show", "open", "display", "view", "launch", "project"):
                         if not obj:
-                            result = "What shall I project, sir?"
+                            result = "What shall I project?"
                         else:
                             model = hologram_model(obj)
                             path = hologram_save(model, obj)
                             hologram_launch(model_path=path)
-                            result = (f"Projecting {model['name']} as a hologram, sir "
+                            result = (f"Projecting {model['name']} as a hologram "
                                       f"({len(model['parts'])} parts).")
                     elif action in ("show_part", "focus", "select"):
                         if not obj:
-                            result = "Which object and part, sir?"
+                            result = "Which object and part?"
                         else:
                             model = hologram_model(obj)
                             path = hologram_save(model, obj)
                             hologram_launch(model_path=path, part=part or obj)
-                            result = f"Highlighting the {part or obj}, sir."
+                            result = f"Highlighting the {part or obj}."
                     elif action == "explode":
                         hologram_launch(explode=True)
-                        result = "Exploded view engaged, sir."
+                        result = "Exploded view engaged."
                     elif action == "assemble":
                         hologram_launch(explode=False)
-                        result = "Reassembling, sir."
+                        result = "Reassembling."
                     elif action == "rotate":
                         val = args.get("value")
                         hologram_command({"action": "autorotate",
                                           "value": True if val is None else bool(val)})
-                        result = "Rotation updated, sir."
+                        result = "Rotation updated."
                     elif action in ("close", "quit", "stop", "hide"):
                         hologram_command({"action": "quit"})
-                        result = "Closing the hologram, sir."
+                        result = "Closing the hologram."
                     elif action in ("list", "library"):
                         names = ", ".join(hologram_list())
-                        result = f"I have {len(hologram_list())} built-in objects, sir: {names}."
+                        result = f"I have {len(hologram_list())} built-in objects: {names}."
                     else:
                         result = f"Unknown hologram action: {action}"
                 except Exception as e:
                     print(f"[JARVIS] Hologram error: {e}")
-                    result = "I couldn't open the holographic display, sir."
+                    result = "I couldn't open the holographic display."
 
             elif name == "smart_alert":
                 action = args.get("action", "")
@@ -1399,17 +1440,17 @@ class JarvisLive:
                 elif action == "test_alert":
                     from smart_alerts import _load_config
                     cfg = _load_config()
-                    ok = send_whatsapp_text_alert(cfg["user_phone"], "JARVIS test: WhatsApp alerts are working, sir.")
-                    result = "Test WhatsApp alert sent, sir." if ok else "Failed. Check phone number."
+                    ok = send_whatsapp_text_alert(cfg["user_phone"], "JARVIS test: WhatsApp alerts are working.")
+                    result = "Test WhatsApp alert sent." if ok else "Failed. Check phone number."
                 elif action == "check_now":
                     emails = check_emails_and_alert()
-                    result = f"Found {len(emails)} important emails." if emails else "No important emails right now, sir."
+                    result = f"Found {len(emails)} important emails." if emails else "No important emails right now."
                 elif action == "enable":
                     start_alert_monitoring()
-                    result = "WhatsApp alerts enabled, sir."
+                    result = "WhatsApp alerts enabled."
                 elif action == "disable":
                     stop_alert_monitoring()
-                    result = "WhatsApp alerts disabled, sir."
+                    result = "WhatsApp alerts disabled."
                 else:
                     result = f"Unknown alert action: {action}"
 
@@ -1422,7 +1463,7 @@ class JarvisLive:
                     result = f"Total unread: {n['total']}\nEmails: {len(n['emails'])}\nWhatsApp: {len(n['whatsapp'])}\nInstagram: {len(n['instagram'])}"
                 elif action == "mark_all_read":
                     mark_all_read()
-                    result = "All notifications marked as read, sir."
+                    result = "All notifications marked as read."
                 else:
                     result = f"Unknown notification action: {action}"
 
@@ -1435,13 +1476,13 @@ class JarvisLive:
                     result = f"Task added: {task['title']}"
                 elif action == "complete_task":
                     ok = complete_task(args.get("title", ""))
-                    result = "Milestone completed, sir." if ok else "Task not found."
+                    result = "Milestone completed." if ok else "Task not found."
                 elif action == "add_milestone":
                     ms = add_milestone(args.get("title", ""), args.get("description", ""))
                     result = f"Milestone added: {ms['title']}"
                 elif action == "complete_milestone":
                     ok = complete_milestone(args.get("title", ""))
-                    result = "Milestone completed, sir." if ok else "Milestone not found."
+                    result = "Milestone completed." if ok else "Milestone not found."
                 elif action == "log_metric":
                     m = log_metric(args.get("metric_name", ""), args.get("metric_value", 0), args.get("description", ""))
                     result = f"Metric logged: {m['metric']} = {m['value']}"
@@ -1473,7 +1514,7 @@ class JarvisLive:
                     result = f"Task added: {t['title']}"
                 elif action == "complete_task":
                     ok = complete_task(args.get("title", "") or args.get("id", ""))
-                    result = "Task marked complete, sir." if ok else "Task not found."
+                    result = "Task marked complete." if ok else "Task not found."
                 elif action == "pending_tasks":
                     tasks = get_pending_tasks()
                     result = f"Pending tasks: {len(tasks)}\n" + "\n".join(f"- [{t['priority']}] {t['title']}" for t in tasks[:10])
@@ -1524,7 +1565,7 @@ class JarvisLive:
                 )
                 self.ui.jarvis_think("sys", f"queued background task "
                                             f"[{task_id}]: {goal}")
-                result = f"Task started (ID: {task_id}). I'll update you as I make progress, sir."
+                result = f"Task started (ID: {task_id}). I'll update you as I make progress."
             elif name == "spotify_control":
                 r = await loop.run_in_executor(
                     None, lambda: spotify_control(parameters=args)
@@ -1816,7 +1857,7 @@ class JarvisLive:
                 alerts = await asyncio.to_thread(pop_routine_alerts)
                 for alert in alerts:
                     self.ui.write_log(f"Routine: {alert['message']}")
-                    self.speak(f"Routine reminder, sir. {alert['message']}")
+                    self.speak(f"Routine reminder. {alert['message']}")
 
                 # Every ~30 min, nudge about habits not done yet today (evening only).
                 now = time.time()
@@ -1825,7 +1866,7 @@ class JarvisLive:
                     pending = await asyncio.to_thread(habits_at_risk)
                     if pending and _dt.now().hour >= 18:
                         names = ", ".join(h["name"] for h in pending)
-                        self.speak(f"Sir, you still haven't logged these habits today: {names}.")
+                        self.speak(f"You still haven't logged these habits today: {names}.")
             except Exception as e:
                 print(f"[JARVIS] Routine watcher error: {e}")
 
@@ -1871,7 +1912,7 @@ class JarvisLive:
                     try:
                         life_brief = life_briefing()
                         self.ui.write_log(life_brief)
-                        self.speak("Here is your life briefing, sir. " + life_brief.replace("\n", ". "))
+                        self.speak("Here is your life briefing. " + life_brief.replace("\n", ". "))
                     except Exception as e:
                         print(f"[JARVIS] Life briefing failed: {e}")
 
@@ -1879,7 +1920,7 @@ class JarvisLive:
                     try:
                         for alert in pop_routine_alerts():
                             self.ui.write_log(f"Routine: {alert['message']}")
-                            self.speak(f"Routine reminder, sir. {alert['message']}")
+                            self.speak(f"Routine reminder. {alert['message']}")
                     except Exception:
                         pass
 

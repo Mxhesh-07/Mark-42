@@ -625,7 +625,7 @@ def computer_settings(
     action = raw_action.lower().strip().replace(" ", "_").replace("-", "_")
 
     if not action:
-        return "No action could be determined, sir."
+        return "No action could be determined."
 
     print(f"[Settings] ⚙️ Action: {action}  Value: {value}")
 
@@ -640,7 +640,7 @@ def computer_settings(
     if action in ("type_text", "write_on_screen", "type", "write"):
         text = str(value or params.get("text", ""))
         if not text:
-            return "No text provided to type, sir."
+            return "No text provided to type."
         enter_after = bool(params.get("press_enter", False))
         type_text(text, press_enter_after=enter_after)
         return f"Typed: {text[:60]}"
@@ -648,7 +648,7 @@ def computer_settings(
     if action == "press_key":
         key = str(value or params.get("key", ""))
         if not key:
-            return "No key specified, sir."
+            return "No key specified."
         press_key(key)
         return f"Pressed: {key}"
 
@@ -670,7 +670,7 @@ def computer_settings(
 
     func = ACTION_MAP.get(action)
     if not func:
-        return f"Unknown action: '{raw_action}', sir."
+        return f"Unknown action: '{raw_action}'."
 
     try:
         func()

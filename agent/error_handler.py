@@ -88,12 +88,12 @@ def analyze_error(
             "reason":        f"Failed {attempt} times: {error[:100]}",
             "fix_suggestion": "Try a completely different approach or tool",
             "max_retries":   0,
-            "user_message":  "Trying a different approach, sir."
+            "user_message":  "Trying a different approach."
         }
 
     genai.configure(api_key=_get_api_key())
     model = genai.GenerativeModel(
-        model_name="gemini-2.5-flash-lite",
+        model_name="gemini-2.5-flash",
         system_instruction=ERROR_ANALYST_PROMPT
     )
 
@@ -126,7 +126,7 @@ Attempt number: {attempt}"""
 
         if step.get("critical") and result["decision"] == ErrorDecision.SKIP:
             result["decision"]     = ErrorDecision.REPLAN
-            result["user_message"] = "This step is critical — finding alternative approach, sir."
+            result["user_message"] = "This step is critical — finding alternative approach."
 
         print(f"[ErrorHandler] Decision: {result['decision'].value} — {result.get('reason', '')}")
         return result
@@ -138,7 +138,7 @@ Attempt number: {attempt}"""
             "reason":         str(e),
             "fix_suggestion": "Try alternative approach",
             "max_retries":    1,
-            "user_message":   "Encountered an issue, adjusting approach, sir."
+            "user_message":   "Encountered an issue, adjusting approach."
         }
 
 
@@ -152,7 +152,7 @@ def generate_fix(step: dict, error: str, fix_suggestion: str) -> dict:
     import google.generativeai as genai
 
     genai.configure(api_key=_get_api_key())
-    model = genai.GenerativeModel(model_name="gemini-2.0-flash")
+    model = genai.GenerativeModel(model_name="gemini-2.5-flash")
 
     prompt = f"""A task step failed. Generate a replacement step.
 

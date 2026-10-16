@@ -329,7 +329,7 @@ def briefing() -> str:
         lines.append("")
 
     if not emails and not whatsapp and not instagram:
-        lines.append("No new notifications, sir. All clear.")
+        lines.append("No new notifications. All clear.")
 
     return "\n".join(lines)
 

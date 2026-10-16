@@ -203,7 +203,7 @@ def open_app(
     app_name = (parameters or {}).get("app_name", "").strip()
 
     if not app_name:
-        return "Please specify which application to open, sir."
+        return "Please specify which application to open."
 
     system   = platform.system()
     launcher = _OS_LAUNCHERS.get(system)
@@ -236,8 +236,8 @@ def open_app(
         if player:
             player.write_log(f"[open_app] {app_name} (already open)")
         if focused:
-            return f"{app_name} is already open, sir — I've brought it to the front."
-        return f"{app_name} is already running, sir — no need to open it again."
+            return f"{app_name} is already open — I've brought it to the front."
+        return f"{app_name} is already running — no need to open it again."
 
     print(f"[open_app] 🚀 Launching: {app_name} → {normalized} ({system})")
 
@@ -248,18 +248,18 @@ def open_app(
         success = launcher(normalized)
 
         if success:
-            return f"Opened {app_name} successfully, sir."
+            return f"Opened {app_name} successfully."
 
         if normalized != app_name:
             success = launcher(app_name)
             if success:
-                return f"Opened {app_name} successfully, sir."
+                return f"Opened {app_name} successfully."
 
         return (
-            f"I tried to open {app_name}, sir, but couldn't confirm it launched. "
+            f"I tried to open {app_name}, but couldn't confirm it launched. "
             f"It may still be loading or might not be installed."
         )
 
     except Exception as e:
         print(f"[open_app] ❌ {e}")
-        return f"Failed to open {app_name}, sir: {e}"
+        return f"Failed to open {app_name}: {e}"

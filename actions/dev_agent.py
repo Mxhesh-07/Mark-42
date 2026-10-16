@@ -352,7 +352,7 @@ def _build_project(
     try:
         plan = _plan_project(description, language)
     except RateLimitError:
-        msg = "You have reached the rate limit, sir. Please try again shortly."
+        msg = "You have reached the rate limit. Please try again shortly."
         if speak: speak(msg)
         return msg
     except ValueError as e:
@@ -388,7 +388,7 @@ def _build_project(
             )
             file_codes[file_path] = code
         except RateLimitError:
-            msg = "You have reached the rate limit, sir. Please try again shortly."
+            msg = "You have reached the rate limit. Please try again shortly."
             if speak: speak(msg)
             return msg
         except Exception as e:
@@ -396,7 +396,7 @@ def _build_project(
             continue
 
     if not file_codes:
-        msg = "I could not write any files for this project, sir."
+        msg = "I could not write any files for this project."
         if speak: speak(msg)
         return msg
 
@@ -415,7 +415,7 @@ def _build_project(
 
         if not _has_error(last_output):
             msg = (
-                f"Project '{proj_name}' is working, sir. "
+                f"Project '{proj_name}' is working. "
                 f"Built in {attempt} attempt{'s' if attempt > 1 else ''}. "
                 f"Opened in VSCode at {project_dir}."
             )
@@ -443,14 +443,14 @@ def _build_project(
             )
             file_codes[error_file] = fixed
         except RateLimitError:
-            msg = "You have reached the rate limit, sir. Please try again shortly."
+            msg = "You have reached the rate limit. Please try again shortly."
             if speak: speak(msg)
             return msg
         except Exception as e:
             log(f"Fix failed: {e}")
 
     msg = (
-        f"I was unable to get '{proj_name}' working after {MAX_FIX_ATTEMPTS} attempts, sir. "
+        f"I was unable to get '{proj_name}' working after {MAX_FIX_ATTEMPTS} attempts. "
         f"The project is saved at {project_dir} — you can open it in VSCode and check manually."
     )
     if speak: speak(msg)
@@ -479,7 +479,7 @@ def dev_agent(
     timeout      = int(p.get("timeout", 30))
 
     if not description:
-        return "Please describe the project you want me to build, sir."
+        return "Please describe the project you want me to build."
 
     return _build_project(
         description  = description,

@@ -184,7 +184,7 @@ def configure_email(email: str, app_password: str, imap_server: str = None, smtp
         json.dump(config, f, indent=2)
 
     ok, message = test_email_connection()
-    note = "Email configured and verified, sir." if ok else f"Saved, but login test failed: {message}"
+    note = "Email configured and verified." if ok else f"Saved, but login test failed: {message}"
     if config["provider"] == "gmail" and len(app_password) != 16:
         note += " (Gmail app passwords are 16 characters — double-check yours.)"
     return {"ok": ok, "note": note, "email": email}
@@ -259,7 +259,7 @@ def send_email(to: str, subject: str, body: str) -> tuple:
                 "sent_at": datetime.now().isoformat(),
             })
             _save_data(data)
-        return True, f"Email sent to {to}, sir."
+        return True, f"Email sent to {to}."
     except Exception as e:
         print(f"[Email] Send failed: {e}")
         return False, f"Email send failed: {e}"

@@ -228,10 +228,10 @@ def _format_spoken(
     if not flights:
         return (
             f"I couldn't find any flights from {origin} to {destination} "
-            f"on {date}, sir. The page may not have loaded correctly."
+            f"on {date}. The page may not have loaded correctly."
         )
 
-    lines = [f"Here are the flights from {origin} to {destination} on {date}, sir."]
+    lines = [f"Here are the flights from {origin} to {destination} on {date}."]
 
     for i, f in enumerate(flights[:5], 1):
         airline   = f.get("airline",   "Unknown airline")
@@ -376,9 +376,9 @@ def flight_finder(
     save        = params.get("save", False)
 
     if not origin or not destination:
-        return "Please provide both origin and destination, sir."
+        return "Please provide both origin and destination."
     if not date_raw:
-        return "Please provide a departure date, sir."
+        return "Please provide a departure date."
 
     date        = _parse_date(date_raw)
     return_date = _parse_date(return_raw) if return_raw else None
@@ -387,7 +387,7 @@ def flight_finder(
         player.write_log(f"[FlightFinder] {origin} → {destination} on {date}")
 
     if speak:
-        speak(f"Searching flights from {origin} to {destination} on {date}, sir.")
+        speak(f"Searching flights from {origin} to {destination} on {date}.")
 
     print(f"[FlightFinder] ▶️ {origin} → {destination} | {date} | {cabin} | {passengers} pax")
 
@@ -398,7 +398,7 @@ def flight_finder(
         )
 
         if not raw_text:
-            return "Could not retrieve flight data, sir. The page may not have loaded."
+            return "Could not retrieve flight data. The page may not have loaded."
 
         if speak:
             speak("Analysing the results now.")
@@ -422,4 +422,4 @@ def flight_finder(
 
     except Exception as e:
         print(f"[FlightFinder] ❌ Error: {e}")
-        return f"Flight search failed, sir: {e}"
+        return f"Flight search failed: {e}"

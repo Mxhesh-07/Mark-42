@@ -1,0 +1,47 @@
+{
+  "enabled": true,
+  "default_level": "confirm",
+  "limits": {
+    "max_actions_per_task": 8,
+    "max_minutes_per_task": 10,
+    "max_tasks_per_hour": 20
+  },
+  "tools": {
+    "web_search": "allow",
+    "weather_report": "allow",
+    "youtube_video": "allow",
+    "spotify_control": "allow",
+    "reminder": "allow",
+    "flight_finder": "allow",
+    "open_app": "allow",
+    "browser_control": "allow",
+    "file_controller": "confirm",
+    "computer_settings": "confirm",
+    "computer_control": "confirm",
+    "desktop_control": "confirm",
+    "screen_process": "confirm",
+    "send_message": "confirm",
+    "cmd_control": "confirm",
+    "code_helper": "confirm",
+    "dev_agent": "confirm",
+    "generated_code": "confirm"
+  },
+  "actions": {
+    "file_controller": {
+      "read": "allow",
+      "list": "allow",
+      "find": "allow",
+      "disk_usage": "allow",
+      "write": "allow",
+      "create_file": "allow",
+      "copy": "confirm",
+      "move": "confirm",
+      "delete": "confirm"
+    },
+    "computer_settings": {
+      "shutdown": "block",
+      "restart": "block",
+      "lock": "confirm"
+    }
+  }
+}

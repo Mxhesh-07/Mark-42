@@ -34,6 +34,11 @@ companion_mood.json
 startup_data.json
 memory/long_term.json
 memory/memories.json
+memory/procedural_memory.json
+memory/agent_tasks.json
+memory/audit_log.jsonl
+memory/AUTONOMY_OFF
+*.json.tmp
 config/hologram.pid
 config/hologram_cmd.json
 hologram_models/

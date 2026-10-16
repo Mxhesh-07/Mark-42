@@ -40,7 +40,7 @@ def run_cloud_jarvis():
     else:
         print("[Cloud JARVIS] No config found — running in manual mode")
 
-    print("[Cloud JARVIS] Cloud JARVIS is online, sir.")
+    print("[Cloud JARVIS] Cloud JARVIS is online.")
     print("[Cloud JARVIS] Press Ctrl+C to shutdown")
 
     try:
@@ -49,7 +49,7 @@ def run_cloud_jarvis():
             status = get_status()
             print(f"[Cloud JARVIS] Status: {status['total_alerts_sent']} alerts sent")
     except KeyboardInterrupt:
-        print("\n[Cloud JARVIS] Shutting down, sir.")
+        print("\n[Cloud JARVIS] Shutting down.")
         sys.exit(0)
 
 
