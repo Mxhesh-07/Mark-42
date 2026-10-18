@@ -91,7 +91,8 @@ Mark-XXX-main/
 ├── ui.py                   # native Tk UI (log + THINKING panes, input, live transcript)
 ├── gemini_util.py          # quota-resilient model fallback + tier-2 providers
 ├── system_state.py         # desktop/window awareness
-├── voice_id.py             # speaker identification
+├── voice_id.py             # speaker identification (resemblyzer backend)
+├── enroll_voice.py         # CLI: enrol / list / forget a voice
 ├── smart_alerts.py         # inbox monitoring, importance detection, alerts
 ├── notifications.py        # notification center + briefings
 ├── companion.py            # companion mode (mood, check-ins, experiences)
@@ -111,6 +112,7 @@ Mark-XXX-main/
 ├── prompts/                # personality prompt
 ├── config/
 │   ├── providers.json      # tier-2 provider configuration
+│   ├── audio.json          # mic device/level + gate tuning — gitignored
 │   └── api_keys.json       # YOUR KEYS — gitignored, never committed
 ├── requirements.txt        # main (Windows desktop) dependencies
 ├── requirements-cloud.txt  # minimal deps for the cloud monitor
@@ -183,7 +185,7 @@ This file is **gitignored** — never commit it. Minimal template:
 Only `gemini_api_key` is required. The other fields enable tier-2 failover and are optional.
 
 Other gitignored config files (created as you use those features): `email_config.json`,
-`alert_config.json`, `spotify_config.json`.
+`alert_config.json`, `spotify_config.json`, `audio.json` (microphone + noise gate).
 
 ---
 
@@ -194,6 +196,54 @@ Other gitignored config files (created as you use those features): `email_config
 | Desktop assistant | `python -X utf8 main.py` |
 | Cloud monitor (headless) | `python cloud_jarvis.py` |
 | Hologram (standalone) | `python hologram.py --name car` |
+
+### Voice & noise
+
+JARVIS listens through a **noise gate**: audio quieter than the room's noise floor is
+replaced with literal silence, so background noise never reaches the model, while your
+speech passes through untouched. Optional **speaker recognition** identifies who is
+talking (used for labelling; enable strict owner-only gating on request).
+
+```bash
+python enroll_voice.py                 # enrol as the configured owner name
+python enroll_voice.py --name Alex     # enrol explicitly (re-run to refine; runs are averaged)
+python enroll_voice.py --list          # show enrolled voices
+python enroll_voice.py --delete Alex   # forget a voice
+```
+
+A live meter is drawn while recording so you can see the mic hearing you; it stops by
+itself once it has enough speech. Voiceprints live in the gitignored
+`voice_profiles.json`. You can also just say *"JARVIS, remember my voice"*.
+
+The microphone is chosen automatically (the liveliest non-virtual input, preferring the
+low-latency MME host API). To pin a device, or to tune a loud/quiet room, create a
+gitignored `config/audio.json`:
+
+```json
+{
+  "input_device": "Microphone Array",
+  "mic_level": 0.75,
+  "noise_gate": true,
+  "vad_aggression": 3
+}
+```
+
+| Key | Meaning |
+|-----|---------|
+| `input_device` | Substring of the input-device name to use (optional; auto-detected otherwise) |
+| `mic_level` | Windows capture gain, `0`–`1`. Speech **and** noise scale together, so pick the level where speech clears the gate comfortably |
+| `noise_gate` | `true` to silence non-speech audio (default `true`) |
+| `vad_aggression` | `webrtcvad` strictness, `0` (permissive) – `3` (strict) |
+| `gate_floor_min` / `gate_floor_max` | Optional overrides for the gate's noise-floor clamps |
+
+> **`mic_level` and the gate's floor clamps are a matched pair.** If you change the
+> gain, re-check the clamps: too low and the gate latches open on room noise; too high
+> and it mutes your speech. `main.py` logs the tracked floor (`Mic gate: floor≈…`) and
+> the live meter in `enroll_voice.py` shows the actual speech/noise levels.
+
+> **Tip:** if JARVIS cannot hear you, the usual cause is a silent or over-attenuated
+> input. Run `python enroll_voice.py` and watch the meter — if `rms` stays flat while
+> you talk, raise `mic_level` (or check that the right `input_device` is selected).
 
 ### Hologram
 
@@ -227,6 +277,7 @@ See `setup_cloud.sh`.
 | `config/email_config.json` | ❌ gitignored | IMAP/SMTP credentials |
 | `config/alert_config.json` | ❌ gitignored | Alert phone number, enable flag |
 | `config/spotify_config.json` | ❌ gitignored | Spotify client id/secret |
+| `config/audio.json` | ❌ gitignored | Mic device/level + noise-gate tuning |
 
 To add or change a tier-2 model, edit `config/providers.json` — **no code changes needed**.
 Set `"discover": true` on a provider to auto-list models from `GET {base_url}/models`

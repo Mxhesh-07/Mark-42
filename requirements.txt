@@ -20,7 +20,12 @@ win10toast
 setuptools<81
 duckduckgo-search
 youtube-transcript-api
-speechbrain
+# Speaker recognition (see voice_id.py). resemblyzer is the default backend and
+# itself pulls in torch, librosa, scipy and webrtcvad. speechbrain is only an
+# optional alternative backend, so it is intentionally not required here.
+resemblyzer
+# Voice-activity detection used by the noise gate in main.py.
+webrtcvad
 torch
 yfinance
 pytesseract

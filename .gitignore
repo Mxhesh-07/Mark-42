@@ -28,6 +28,7 @@ work_data.json
 life_data.json
 notifications.json
 alert_log.json
+config/audio.json
 voice_profiles.json
 companion_experiences.json
 companion_mood.json

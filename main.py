@@ -60,7 +60,11 @@ from memory.memory_extractor import extract_memory
 from memory.memory_manager import update_memory
 
 from memory import AIMemory
-from voice_id import identify_speaker, register_speaker, list_speakers, assign_name_to_unknown, is_available as voice_id_available
+from voice_id import (
+    identify_speaker, register_speaker,
+    warmup as voice_id_warmup,
+    is_available as voice_id_available,
+)
 from companion import check_in, detect_emotion, respond_with_emotion, personal_joke, remember_experience, get_recent_experiences, companion_response
 from work_assistant import add_task, complete_task, get_pending_tasks, save_meeting_notes, draft_email as wa_draft_email, get_email_drafts as wa_get_email_drafts, save_code_snippet, get_code_snippets, save_document, get_documents, daily_briefing, weekly_summary
 from startup_partner import set_startup_info, log_metric, get_metric_trend, add_milestone, complete_milestone, get_milestones, save_pitch_draft, log_partner_message, get_partner_messages, add_competitor, get_competitors, add_product_feature, get_product_features, add_team_member, get_team, log_investor_update, get_investor_updates, startup_dashboard, strategy_prompt
@@ -126,6 +130,293 @@ ECHO_GUARD_TAIL_S = 0.55
 # to the API defaults.
 VAD_TUNING     = True
 VAD_SILENCE_MS = 600   # pause length that ends your turn
+# Sensitivity of the server VAD. HIGH on both ends reacts sooner: speech onset
+# is picked up faster and the turn closes sooner once you stop, which is what
+# makes JARVIS feel instant. Safe here only because the noise gate below keeps
+# the room hiss out of the uplink — without it, HIGH start would false-trigger
+# on noise and HIGH end would end turns mid-sentence.
+VAD_START_SENS = True
+VAD_END_SENS   = True
+
+# --- input device selection ---------------------------------------------------
+# Windows frequently makes the 3.5mm jack the default recording device. With
+# nothing plugged in that jack captures digital near-silence, so the Live model
+# never hears you and JARVIS looks completely unresponsive to speech.
+#
+# On startup we therefore (1) honour an explicit override in config/audio.json,
+# else (2) measure the system default and keep it only if it actually captures
+# sound, else (3) switch to the liveliest real input device (usually the
+# built-in mic array). config/audio.json is optional:
+#     { "input_device": 2 }                  # by PyAudio index
+#     { "input_device": "Microphone Array" } # or by name substring
+MIC_DEAD_PEAK  = 40      # peak below this = device captured only electrical noise
+MIC_ALIVE_PEAK = 90      # stop scanning early once a device clears this
+MIC_BAD_PEAK   = 30000   # sustained near-full-scale = saturated/broken stream
+_VIRTUAL_HINTS = (
+    "sound mapper", "primary sound capture", "stereo mix", "loopback",
+    "what u hear", "vb-audio", "virtual", "cable output",
+)
+
+# --- microphone noise gate ----------------------------------------------------
+# The built-in mic array used to run hot: its Windows capture level shipped at
+# +17 dB, putting the room noise floor near RMS 400 (~-38 dBFS) — loud enough
+# that even webrtcvad called most silence "speech". The level is now pinned at
+# ~+10 dB (config/audio.json -> "mic_level", applied via _apply_mic_level),
+# which drops the floor to ~RMS 40-64. On top of that we gate the uplink:
+# nothing is sent until the signal rises clearly above the tracked noise floor,
+# then audio keeps flowing for a short hangover so word tails are not clipped.
+# Between utterances we send literal silence, which is what lets the VAD close
+# the turn promptly. Set NOISE_GATE = False to send the raw microphone signal.
+# Tunable from config/audio.json: {"noise_gate": true, "gate_factor": 2.5}
+NOISE_GATE       = True
+GATE_OPEN_FACTOR = 1.9    # open when chunk RMS > noise floor * this
+GATE_HOLD_FACTOR = 1.3    # stay open while RMS > noise floor * this
+GATE_HANGOVER_S  = 0.35   # ... and for this long after it drops below
+# Floor clamps. These must track the capture level set by _apply_mic_level
+# (config/audio.json "mic_level"), because both speech and the room's noise
+# scale with the gain. At the default level 0.75 (+9.9 dB), measured on this
+# laptop's Realtek array, a quiet room sits near RMS 40-64 and normal speech
+# near RMS 250-1000:
+#   * the low clamp must sit ABOVE the room's burst level (RMS ~108 here) or the
+#     gate latches open at start-up and never recovers — the floor is only
+#     learned while muted, so an open gate cannot correct itself;
+#   * the high clamp must sit BELOW normal speech, or a loud room would mute
+#     the user instead of the noise.
+# Override in config/audio.json: {"gate_floor_min": 65, "gate_floor_max": 125}
+GATE_MIN_FLOOR   = 65.0
+GATE_MAX_FLOOR   = 125.0
+GATE_PERCENTILE  = 25     # floor = low percentile of recent muted-chunk levels
+GATE_WINDOW      = 90     # muted chunks kept for that estimate (~6 s)
+GATE_SILENCE     = b"\x00" * CHUNK_SIZE * 2   # one chunk of 16-bit silence
+
+# --- voice activity detection -------------------------------------------------
+# WebRTC's VAD is built for exactly this job: separating speech from background
+# noise. When webrtcvad is installed the gate decision is delegated to it (per
+# 20 ms frame), with the RMS floor above still used for the onset/hangover
+# timing and as a fallback when webrtcvad is missing.
+#
+# NOTE: these detectors have absolute energy thresholds, so they only behave
+# when the capture gain is sane. This machine's "Microphone Array" shipped at
+# +17 dB, where webrtcvad flagged ~80% of *silent* frames as speech; at +3 dB it
+# flags 0%. Windows mic level is the first thing to check if noise returns.
+VAD_ENGINE     = True   # use webrtcvad for the gate decision when available
+VAD_AGGRESSION = 3      # 0 (permissive) .. 3 (most aggressive noise rejection)
+VAD_FRAME_MS   = 20     # webrtcvad accepts 10, 20 or 30 ms frames
+VAD_RATE       = 16000  # ... at 8, 16, 32 or 48 kHz
+
+
+def _webrtcvad_available() -> bool:
+    try:
+        import webrtcvad  # noqa: F401
+        return True
+    except Exception:
+        return False
+
+
+
+def _owner_name() -> str:
+    """The user's name from memory, else a neutral fallback.
+
+    Used as the default label when a voice is enrolled without an explicit name.
+    """
+    try:
+        entry = (load_memory().get("identity", {}) or {}).get("name")
+        name = entry.get("value") if isinstance(entry, dict) else entry
+        if isinstance(name, str) and name.strip():
+            return name.strip()
+    except Exception:
+        pass
+    return "Owner"
+
+
+def _load_audio_config() -> dict:
+    """Optional user overrides (input device, noise gate). Never fatal."""
+    try:
+        with open(BASE_DIR / "config" / "audio.json", encoding="utf-8") as f:
+            cfg = json.load(f)
+        return cfg if isinstance(cfg, dict) else {}
+    except Exception:
+        return {}
+
+
+AUDIO_CONFIG = _load_audio_config()
+
+
+def _device_peak(pa, index: int, seconds: float = 0.6) -> int:
+    """Peak sample magnitude captured from `index` (-1 if unusable).
+
+    Returns -1 not just when the device will not open, but also when the stream
+    is clearly broken: some host-API copies (e.g. a DirectSound path on this
+    machine's Realtek array) hand back far more samples than were requested, or
+    sit pinned at full scale. Either would otherwise look like the *loudest*
+    microphone and be chosen.
+    """
+    try:
+        stream = pa.open(
+            format=FORMAT, channels=CHANNELS, rate=SEND_SAMPLE_RATE,
+            input=True, input_device_index=index,
+            frames_per_buffer=CHUNK_SIZE,
+        )
+    except Exception:
+        return -1
+    peak = 0
+    broken = False
+    try:
+        t0 = time.time()
+        while time.time() - t0 < seconds:
+            data = stream.read(CHUNK_SIZE, exception_on_overflow=False)
+            s = np.frombuffer(data, dtype=np.int16)
+            if s.size > CHUNK_SIZE:      # host returned more than we asked for
+                broken = True
+                break
+            if s.size:
+                peak = max(peak, int(np.abs(s).max()))
+    except Exception:
+        return -1
+    finally:
+        try:
+            stream.close()
+        except Exception:
+            pass
+    if broken or peak >= MIC_BAD_PEAK:
+        return -1
+    return peak
+
+
+def _pick_input_device():
+    """Return the PyAudio index of the microphone to listen on (or None).
+
+    Preference: config/audio.json -> system default if it captures sound ->
+    liveliest real input device -> system default.
+    """
+    pref = AUDIO_CONFIG.get("input_device")
+
+    try:
+        pa = pyaudio.PyAudio()
+    except Exception:
+        return None
+
+    try:
+        # Real capture devices only, de-duplicated across host APIs, skipping
+        # virtual/loopback endpoints that are not microphones. The same physical
+        # mic is enumerated once per host API (MME/DirectSound/WASAPI); MME
+        # truncates names at 31 characters, so the names do not compare equal.
+        # Match on a 28-char prefix and keep the MME copy (hostApi 0), which is
+        # the most compatible and, on this machine, the only working one.
+        candidates = []
+        for i in range(pa.get_device_count()):
+            try:
+                d = pa.get_device_info_by_index(i)
+            except Exception:
+                continue
+            name = str(d.get("name", ""))
+            low  = name.lower()
+            if not d.get("maxInputChannels") or any(h in low for h in _VIRTUAL_HINTS):
+                continue
+            candidates.append((i, name, int(d.get("hostApi", 99))))
+
+        candidates.sort(key=lambda t: (t[2], t[0]))     # MME first, then index
+        inputs, seen = [], set()
+        for i, name, _api in candidates:
+            key = name.lower()[:28]
+            if key in seen:
+                continue
+            seen.add(key)
+            inputs.append((i, name))
+
+        if isinstance(pref, int):
+            print(f"[JARVIS] 🎙️ Input device (from config): [{pref}]")
+            return pref
+        if isinstance(pref, str) and pref.strip():
+            needle = pref.strip().lower()
+            for i, nm in inputs:
+                if needle in nm.lower():
+                    print(f"[JARVIS] 🎙️ Input device (from config): [{i}] {nm}")
+                    return i
+            print(f"[JARVIS] ⚠️ config input_device '{pref}' not found — auto-detecting")
+
+        try:
+            default_index = pa.get_default_input_device_info()["index"]
+        except Exception:
+            default_index = None
+
+        default_name = next((nm for i, nm in inputs if i == default_index), "system default")
+        if default_index is not None:
+            p = _device_peak(pa, default_index)
+            print(f"[JARVIS] 🎙️ Default input [{default_index}] {default_name} "
+                  f"peak={p}")
+            if p >= MIC_DEAD_PEAK:
+                return default_index
+            print("[JARVIS] ⚠️ Default microphone appears silent "
+                  "(3.5mm jack with nothing plugged in?) — searching for a live mic")
+
+        best, best_peak, best_name = None, -1, ""
+        for i, nm in inputs:
+            if i == default_index:
+                continue
+            p = _device_peak(pa, i)
+            if p > best_peak:
+                best, best_peak, best_name = i, p, nm
+            if p >= MIC_ALIVE_PEAK:
+                break
+
+        if best is not None and best_peak > 0:
+            if best_peak >= MIC_DEAD_PEAK:
+                print(f"[JARVIS] 🎙️ Using input [{best}] {best_name}  (peak={best_peak})")
+            else:
+                print(f"[JARVIS] ⚠️ Every microphone looks quiet — using the "
+                      f"best, [{best}] {best_name} (peak={best_peak}); check the "
+                      f"Windows mic level or mute if JARVIS cannot hear you")
+            return best
+
+        print("[JARVIS] ⚠️ No microphone produced any signal — using system default")
+        return None
+    finally:
+        pa.terminate()
+
+
+def _device_name(index) -> str:
+    """Friendly name of a PyAudio input device index ('' if unknown)."""
+    if index is None:
+        return ""
+    try:
+        pa = pyaudio.PyAudio()
+        try:
+            return str(pa.get_device_info_by_index(index).get("name", ""))
+        finally:
+            pa.terminate()
+    except Exception:
+        return ""
+
+
+def _apply_mic_level(device_name: str, level: float) -> None:
+    """Set the Windows capture level for `device_name` (0.0 .. 1.0).
+
+    Microphone gain is the single biggest cause of a noisy transcript: this
+    machine's array shipped at +17 dB, where the room noise floor alone was loud
+    enough for a VAD to read it as speech. Only applied when config/audio.json
+    sets "mic_level", so JARVIS never changes system audio on its own.
+    """
+    try:
+        from ctypes import cast, POINTER
+        from comtypes import CLSCTX_ALL
+        from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
+
+        enum = AudioUtilities.GetDeviceEnumerator()
+        needle = device_name.lower()
+        for dev in AudioUtilities.GetAllDevices(data_flow=1):
+            if needle and needle in dev.FriendlyName.lower():
+                imm = enum.GetDevice(dev.id)
+                iface = imm.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
+                vol = cast(iface, POINTER(IAudioEndpointVolume))
+                vol.SetMute(0, None)
+                vol.SetMasterVolumeLevelScalar(max(0.0, min(1.0, float(level))), None)
+                print(f"[JARVIS] 🔉 Mic level -> {vol.GetMasterVolumeLevelScalar():.2f} "
+                      f"({vol.GetMasterVolumeLevel():.1f} dB) on {dev.FriendlyName}")
+                return
+        print(f"[JARVIS] ⚠️ mic '{device_name}' not found for mic_level")
+    except Exception as e:
+        print(f"[JARVIS] ⚠️ could not set mic level: {e}")
 
 # --- cognitive / character tuning (Live model) -------------------------------
 # These shape how JARVIS thinks and answers, not just what he says.
@@ -736,19 +1027,23 @@ TOOL_DECLARATIONS = [
     {
         "name": "register_voice",
         "description": (
-            "Registers the current speaker's voice with a given name. "
-            "Use when user says 'register my voice as [name]' or 'remember my voice'. "
-            "Saves voice fingerprint for future speaker identification."
+            "Enrols the current speaker's voice so JARVIS can recognise them "
+            "later. Use whenever the user says 'remember my voice', 'learn my "
+            "voice', 'this is me', or 'register my voice as [name]'. The voice "
+            "sample is taken from what the user just said, so call it as soon "
+            "as possible after they speak."
         ),
         "parameters": {
             "type": "OBJECT",
             "properties": {
                 "name": {
                     "type": "STRING",
-                    "description": "Name to associate with the voice (e.g. 'Mahesh', 'John')"
+                    "description": (
+                        "Name to associate with the voice (e.g. 'Mahesh'). "
+                        "Optional — omit it to use the user's configured name."
+                    )
                 }
-            },
-            "required": ["name"]
+            }
         }
     },
     {
@@ -902,6 +1197,16 @@ class JarvisLive:
         self._play_lock    = threading.Lock()
         self._echo_dropped = 0                   # mic chunks suppressed (diagnostic)
 
+        # --- noise gate state -------------------------------------------------
+        self._gate_win   = []                    # recent muted-chunk RMS levels
+        self._gate_floor = 0.0                   # current floor estimate (display)
+        self._gate_open  = False
+        self._gate_last  = 0.0                   # last time the gate saw speech
+        self._gate_min   = GATE_MIN_FLOOR        # clamps (config-overridable)
+        self._gate_max   = GATE_MAX_FLOOR
+        self._vad_carry  = b""                   # leftover bytes for webrtcvad
+        self._last_speaker = None                # last (name, confidence) heard
+
         # --- speaker ID throttle ---------------------------------------------
         # Input transcription streams many chunks per turn; only run speaker
         # identification occasionally instead of spawning a thread per chunk.
@@ -971,10 +1276,17 @@ class JarvisLive:
         # measured to hurt short utterances, so they are deliberately unused.
         vad_kwargs = {}
         if VAD_TUNING:
-            vad_kwargs["realtime_input_config"] = types.RealtimeInputConfig(
-                automatic_activity_detection=types.AutomaticActivityDetection(
-                    silence_duration_ms=VAD_SILENCE_MS,
+            aad = {"silence_duration_ms": VAD_SILENCE_MS}
+            if VAD_START_SENS:
+                aad["start_of_speech_sensitivity"] = (
+                    types.StartSensitivity.START_SENSITIVITY_HIGH
                 )
+            if VAD_END_SENS:
+                aad["end_of_speech_sensitivity"] = (
+                    types.EndSensitivity.END_SENSITIVITY_HIGH
+                )
+            vad_kwargs["realtime_input_config"] = types.RealtimeInputConfig(
+                automatic_activity_detection=types.AutomaticActivityDetection(**aad)
             )
 
         # Cognitive settings (see THINKING_BUDGET / AFFECTIVE_DIALOG / CTX_*).
@@ -1130,9 +1442,7 @@ class JarvisLive:
                 )
                 result = r or "Done."
             elif name == "register_voice":
-                speaker_name = args.get("name", "").strip()
-                if not speaker_name:
-                    raise ValueError("register_voice requires a 'name' parameter.")
+                speaker_name = (args.get("name") or "").strip() or _owner_name()
                 voice_id = np.frombuffer(self._snapshot_mic_audio(), dtype=np.int16)
                 success = register_speaker(speaker_name, voice_id, sample_rate=SEND_SAMPLE_RATE)
                 result = f"Voice registered as '{speaker_name}'." if success else "Voice registration failed."
@@ -1634,16 +1944,62 @@ class JarvisLive:
             return (time.time() - self._last_play_ts) < ECHO_GUARD_TAIL_S
 
     async def _listen_audio(self):
-        print(f"[JARVIS] 🎤 Mic started (echo guard: "
+        device = await asyncio.to_thread(_pick_input_device)
+
+        # Optional: pin the Windows capture level (see _apply_mic_level).
+        _lvl = AUDIO_CONFIG.get("mic_level")
+        if _lvl is not None:
+            await asyncio.to_thread(_apply_mic_level, _device_name(device), float(_lvl))
+
+        try:
+            stream = await asyncio.to_thread(
+                pya.open,
+                format=FORMAT,
+                channels=CHANNELS,
+                rate=SEND_SAMPLE_RATE,
+                input=True,
+                frames_per_buffer=CHUNK_SIZE,
+                input_device_index=device,
+            )
+        except Exception as e:
+            print(f"[JARVIS] ⚠️ Input device {device} failed ({e}) — using default")
+            stream = await asyncio.to_thread(
+                pya.open,
+                format=FORMAT,
+                channels=CHANNELS,
+                rate=SEND_SAMPLE_RATE,
+                input=True,
+                frames_per_buffer=CHUNK_SIZE,
+            )
+        print(f"[JARVIS] 🎤 Mic started (device={device}, echo guard: "
               f"{'ON' if ECHO_GUARD else 'OFF'}, tail {ECHO_GUARD_TAIL_S}s)")
-        stream = await asyncio.to_thread(
-            pya.open,
-            format=FORMAT,
-            channels=CHANNELS,
-            rate=SEND_SAMPLE_RATE,
-            input=True,
-            frames_per_buffer=CHUNK_SIZE,
-        )
+
+        # Noise-gate settings (see the NOISE_GATE block above).
+        gate_on      = bool(AUDIO_CONFIG.get("noise_gate", NOISE_GATE))
+        gate_factor  = float(AUDIO_CONFIG.get("gate_factor", GATE_OPEN_FACTOR))
+        self._gate_min = float(AUDIO_CONFIG.get("gate_floor_min", GATE_MIN_FLOOR))
+        self._gate_max = float(AUDIO_CONFIG.get("gate_floor_max", GATE_MAX_FLOOR))
+        gate_sent    = 0     # chunks actually forwarded (diagnostic)
+        gate_dropped = 0     # chunks replaced with silence (diagnostic)
+
+        # WebRTC VAD: decides speech vs background noise, per 20 ms frame.
+        vad = None
+        if VAD_ENGINE and _webrtcvad_available():
+            try:
+                import webrtcvad
+                mode = int(AUDIO_CONFIG.get("vad_aggression", VAD_AGGRESSION))
+                vad = webrtcvad.Vad(max(0, min(3, mode)))
+                print(f"[JARVIS] 🔇 Voice-activity filter on "
+                      f"(webrtcvad, aggression {mode})")
+            except Exception as e:
+                print(f"[JARVIS] ⚠️ webrtcvad unavailable ({e}) — RMS gate only")
+        vad_frame_bytes = int(VAD_RATE * VAD_FRAME_MS / 1000) * 2   # 16-bit mono
+
+        # Dead-mic watchdog: if the open device never produces sound, say so
+        # once instead of silently ignoring the user for the whole session.
+        win_start   = time.time()
+        win_peak    = 0
+        warned_dead = False
         try:
             while True:
                 data = await asyncio.to_thread(
@@ -1668,8 +2024,54 @@ class JarvisLive:
 
                 self.ui.update_mic_level(level)
 
+                # --- dead-mic watchdog (one check per ~12s window) -----------
+                if samples.size:
+                    win_peak = max(win_peak, int(np.abs(samples).max()))
+                if time.time() - win_start > 12:
+                    if win_peak < MIC_DEAD_PEAK and not warned_dead:
+                        warned_dead = True
+                        msg = (f"No sound detected on input device {device} — "
+                               "check the selected microphone "
+                               "(config/audio.json -> \"input_device\").")
+                        print(f"[JARVIS] ⚠️ {msg}")
+                        self.ui.jarvis_think("err", msg)
+                        self.ui.write_log(f"[Audio] {msg}")
+                    if gate_on:
+                        total = gate_sent + gate_dropped
+                        muted = (gate_dropped / total * 100) if total else 0.0
+                        print(f"[JARVIS] 🎙️ Mic gate: floor≈{self._gate_floor:.0f} "
+                              f"RMS, muted {muted:.0f}% of the last 12s "
+                              f"(now {'open' if self._gate_open else 'shut'})")
+                    win_start, win_peak = time.time(), 0
+                    gate_sent = gate_dropped = 0
+
+                # --- noise gate ----------------------------------------------
+                # Forward audio only when it rises above the room's noise floor;
+                # otherwise hand the VAD literal silence so it can close the turn.
+                vad_speech = None
+                if vad is not None:
+                    buf = self._vad_carry + data
+                    n_frames = len(buf) // vad_frame_bytes
+                    speech = False
+                    for k in range(n_frames):
+                        frame = buf[k * vad_frame_bytes:(k + 1) * vad_frame_bytes]
+                        if vad.is_speech(frame, VAD_RATE):
+                            speech = True
+                            break
+                    # Keep only the incomplete tail; frames stay aligned.
+                    self._vad_carry = buf[n_frames * vad_frame_bytes:]
+                    vad_speech = speech
+
+                raw_data = data          # ungated audio, kept for speaker ID
+
+                if self._gate_keeps_audio(samples, gate_on, gate_factor, vad_speech):
+                    gate_sent += 1
+                else:
+                    data = GATE_SILENCE[:len(data)]
+                    gate_dropped += 1
+
                 with self._mic_lock:
-                    self._mic_buffer.extend(data)
+                    self._mic_buffer.extend(raw_data)
                     if len(self._mic_buffer) > self._mic_max_bytes:
                         del self._mic_buffer[:-self._mic_max_bytes]
 
@@ -1683,6 +2085,53 @@ class JarvisLive:
         finally:
             stream.close()
 
+    def _gate_keeps_audio(self, samples, gate_on: bool, gate_factor: float,
+                          vad_speech=None) -> bool:
+        """Say whether this chunk is speech, tracking the room noise floor.
+
+        The chunk is kept if *either* detector says speech: webrtcvad's `vad_speech`
+        frame verdict (when supplied) or the chunk's RMS relative to the tracked
+        noise floor. The union means real speech is never dropped because one
+        detector was unsure, while both stay quiet on pure noise.
+
+        The floor is a low percentile of recent *muted* chunk levels (not a
+        running mean): a cough, a door or the keyboard are brief bursts and must
+        not drag the floor up, and the clamp stops a genuinely loud room from
+        raising the threshold beyond normal speech. Opening is instant so the
+        first word is never lost, and the gate stays open GATE_HANGOVER_S past
+        the last speech frame so word tails are never clipped.
+        """
+        if not gate_on or not samples.size:
+            return True
+
+        x = samples.astype(np.float32)
+        x -= x.mean()                              # ignore any DC offset
+        rms = float(np.sqrt(np.mean(x * x)))
+        now = time.time()
+
+        floor = float(np.percentile(self._gate_win, GATE_PERCENTILE)) \
+            if self._gate_win else rms
+        floor = min(max(floor, self._gate_min), self._gate_max)
+        self._gate_floor = floor
+
+        rms_speech = rms > floor * (GATE_HOLD_FACTOR if self._gate_open
+                                    else gate_factor)
+        speak_now = rms_speech or bool(vad_speech)
+
+        if speak_now:
+            self._gate_open = True
+            self._gate_last = now
+        elif not (self._gate_open and now - self._gate_last <= GATE_HANGOVER_S):
+            self._gate_open = False
+
+        if not self._gate_open:
+            # Learn the floor only while muted, so speech cannot lift it.
+            self._gate_win.append(rms)
+            if len(self._gate_win) > GATE_WINDOW:
+                del self._gate_win[:-GATE_WINDOW]
+
+        return self._gate_open
+
     def _identify_speaker(self, audio_data: bytes):
         """Run speaker identification on captured audio."""
         try:
@@ -1693,6 +2142,7 @@ class JarvisLive:
                 return
             result = identify_speaker(samples, sample_rate=SEND_SAMPLE_RATE)
             if result["status"] == "known":
+                self._last_speaker = (result["name"], result["confidence"])
                 self.ui.write_log(f"Speaker: {result['name']} ({result['confidence']:.0%})")
                 self.ui.jarvis_think("sys", f"voice match: {result['name']} "
                                             f"({result['confidence']:.0%})")
@@ -1905,6 +2355,13 @@ class JarvisLive:
                     start_monitoring()
                     start_alert_monitoring()
                     start_routine_scheduler()
+
+                    # Speaker recognition: load the voice model in the
+                    # background so the first identification is instant rather
+                    # than stalling ~7 s on the first utterance.
+                    if voice_id_available():
+                        threading.Thread(target=voice_id_warmup,
+                                         daemon=True).start()
                     notif_brief = briefing()
                     self.ui.write_log(notif_brief)
 
