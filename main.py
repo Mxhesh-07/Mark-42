@@ -2357,6 +2357,14 @@ class JarvisLive:
                                     _jlog.set_turn()
                                 except Exception:
                                     pass
+                                # W1: a real user turn is activity, so "you have
+                                # been at this for two hours" is measured, not guessed.
+                                try:
+                                    from agent import initiative as _initiative
+
+                                    _initiative.get().note_activity()
+                                except Exception:
+                                    pass
                                 self.ui.write_log(f"You: {full_in}")
                                 self.ui.jarvis_think("in", full_in)
 
@@ -2482,6 +2490,17 @@ class JarvisLive:
                     print("[JARVIS] ✅ Connected.")
                     self.ui.write_log("JARVIS online.")
                     self.ui.jarvis_think("sys", "connected to Gemini Live — session established")
+
+                    # W1: hand the initiative engine the live voice as its
+                    # speaker. Re-done on every reconnect, so a proactive nudge
+                    # reaches whichever session is current; before the first
+                    # connect it degrades to the HUD.
+                    try:
+                        from agent import initiative as _initiative
+
+                        _initiative.get().configure(speaker=self.speak)
+                    except Exception:
+                        pass
                     _name = ""
                     try:
                         _identity = load_memory().get("identity", {}) or {}
@@ -2561,7 +2580,15 @@ def main():
 
     def runner():
         ui.wait_for_api_key()
-        
+
+        # W1: the initiative tick rides the task queue's worker loop, so that
+        # loop has to be running for a proactive nudge to ever fire. Starting it
+        # is idempotent.
+        try:
+            get_queue()
+        except Exception:
+            pass
+
         jarvis = JarvisLive(ui)
         try:
             asyncio.run(jarvis.run())

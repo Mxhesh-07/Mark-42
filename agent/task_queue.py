@@ -12,6 +12,11 @@ from agent import task_store
 # so an interrupted task resumes instead of vanishing. Set False to disable.
 RESTORE_INTERRUPTED = True
 
+# W1: how often the initiative engine gets a look in. The tick rides the task
+# queue's existing worker loop rather than opening a thread of its own, and it is
+# throttled because that loop spins freely whenever a task is in flight.
+INITIATIVE_INTERVAL_S = 30.0
+
 
 def _think(kind: str, text: str) -> None:
     """Best-effort feed to the THINKING pane (the UI may not be loaded)."""
@@ -242,8 +247,16 @@ class TaskQueue:
             return sum(1 for t in self._queue if t.status == TaskStatus.PENDING)
 
     def _worker_loop(self) -> None:
+        last_initiative = 0.0
         while self._running:
             task = None
+
+            # W1: the initiative tick rides this existing loop (no new thread).
+            # Throttled, because this loop can spin freely while a task runs.
+            now = time.monotonic()
+            if (now - last_initiative) >= INITIATIVE_INTERVAL_S:
+                last_initiative = now
+                self._tick_initiative()
 
             with self._condition:
                 while self._running and not self._next_task():
@@ -264,6 +277,16 @@ class TaskQueue:
                     daemon=True,
                     name=f"AgentTask-{task.task_id}"
                 ).start()
+
+    @staticmethod
+    def _tick_initiative() -> None:
+        """One look at the initiative triggers. Never lets a probe break the loop."""
+        try:
+            from agent import initiative
+
+            initiative.tick()
+        except Exception:
+            pass
 
     def _next_task(self) -> Task | None:
         if self._active_count >= self._max_concurrent:

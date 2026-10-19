@@ -66,5 +66,16 @@
     "default": "owner",
     "map": { "owner": [], "guest": [] },
     "extra_tools": { "guest": [], "unknown": [] }
+  },
+  "initiative": {
+    "enabled": true,
+    "max_interrupts_per_hour": 3,
+    "max_speaks_per_hour": 10,
+    "min_urgency": 1,
+    "quiet_hours": ["23:00", "07:00"],
+    "triggers": {
+      "battery_low": "speak",
+      "long_focus_break": "digest"
+    }
   }
 }

@@ -113,6 +113,7 @@ Because Mark-42 can drive your machine, every tool call passes through one gate
 | **Health endpoint** | A read-only, loopback-only HTTP surface (`python -m agent.health --serve`, or `JARVIS_HEALTH_PORT=8799`) exposes `/health`, `/ready`, `/status` and `/metrics`. |
 | **Self-model** | A stable identity plus a per-domain confidence average fed by real outcomes (`core/self.py`). It is injected into the prompt so the assistant can name a blocked capability, its policy and a weak domain instead of guessing - and it is written once, so a restart does not rewrite who it is. |
 | **Judgement** | Beyond the binary gate, each call is scored for risk (`agent/judgement.py`): `0.45 x how-undoable + 0.35 x whom-it-affects + 0.20 x (1 - confidence)`. Above the threshold, and only when a concrete safer alternative exists, one sentence is said - once per effect per session. It is folded into the confirmation prompt, never repeated, and never argued. |
+| **Initiative** | Proactivity with restraint (`agent/initiative.py`). Every trigger carries a **fixed** urgency - nothing at runtime can raise it, only the config can lower it - and a candidate is capped before it is ever spoken: quiet hours cap it to DIGEST, you talking (or focus mode, or a meeting) caps it to NOTIFY, and hourly interrupt/speak budgets cap it too. Per-trigger cooldowns stop repeats; the kill switch drops everything; the tick rides the task-queue loop, so there is no extra thread. |
 | **Observability** | Counters and gauges (`agent/metrics.py`), per-turn stage timings (`agent/trace.py`), and redacted crash bundles under `memory/crashes/` (`agent/crash.py`). |
 | **Tamper-evident audit log** | Every decision is appended to an append-only JSONL log, hash-chained so a later edit, reorder or deletion is detectable: `python -m agent.audit verify`. |
 | **Prompt-injection defense** | Text the assistant fetches (web search, pages, OCR, transcripts) is tagged as untrusted data before it reaches a model, and instruction-like spans are neutralised — including when fetched content is about to be written to a file. |
@@ -156,6 +157,7 @@ Mark-XXX-main/
 │   ├── subprocess_sandbox.py # A11: restricted-env subprocess for generated code
 │   ├── breaker.py          # B1: circuit breakers for external providers
 │   ├── judgement.py        # W2: risk score + at-most-one opinion per effect
+│   ├── initiative.py       # W1: fixed-urgency triggers, caps, budgets, cooldowns
 │   ├── degrade.py          # B2: FULL → TEXT_ONLY → READ_ONLY → MONITOR ladder
 │   ├── clock.py            # B7: UTC storage, local display, monotonic timers
 │   ├── metrics.py          # C2: counters/gauges + Prometheus text
@@ -350,6 +352,7 @@ See `setup_cloud.sh`.
 | `config/providers.json` | ✅ | Tier-2 provider list, models, timeouts |
 | `config/autonomy.json` | ✅ | Permission levels, sandbox roots, rate limits, egress, roles |
 | `config/judgement.json` | ✅ | Risk weights, pushback threshold, never-pushback tools |
+| `config/autonomy.json` → `initiative` | ✅ | Proactivity budgets, quiet hours, per-trigger urgency caps |
 | `config/email_config.json` | ❌ gitignored | IMAP/SMTP credentials |
 | `config/alert_config.json` | ❌ gitignored | Alert phone number, enable flag |
 | `config/spotify_config.json` | ❌ gitignored | Spotify client id/secret |
@@ -366,7 +369,7 @@ Set `"discover": true` on a provider to auto-list models from `GET {base_url}/mo
 
 ```bash
 pip install -r requirements-dev.txt    # pytest, ruff and numpy only
-python -m pytest -q                    # 394 tests, no heavy imports
+python -m pytest -q                    # 465 tests, no heavy imports
 python -m ruff check .                 # lint (config in pyproject.toml)
 python -m compileall -q main.py agent  # syntax check
 python -m agent.audit verify           # confirm the audit log is untampered
@@ -374,6 +377,8 @@ python -m agent.health                 # one-shot startup self-check
 python -m agent.health --full          # the above plus the mic and network probe
 python -m agent.health --serve         # read-only /health /ready /status /metrics
 python -m agent.crash list             # recent crash bundles (redacted)
+python -m agent.initiative             # triggers + proactivity budget
+python -m agent.initiative tick        # run one initiative tick now
 python -m memory.backup export         # zip the runtime state (no secrets)
 ```
 
@@ -381,8 +386,8 @@ The suite covers the cross-platform logic — the permission gate, sandbox, comm
 classifier, rate limiter, circuit breakers, prompt-injection defense, structured
 logging, audit chain, atomic writes, egress control, voice roles, signed approvals,
 the degradation ladder, metrics/tracing, health checks, crash bundles, the serialized
-PortAudio door, the self-model, the risk/opinion scorer, the SQLite memory store,
-backup/restore and the
+PortAudio door, the self-model, the risk/opinion scorer, the initiative engine, the
+SQLite memory store, backup/restore and the
 speaker-recognition helpers — and
 deliberately imports nothing Windows-only, so it runs unchanged on Linux. CI runs
 ruff and pytest on **Windows and Ubuntu** (`.github/workflows/ci.yml`).
