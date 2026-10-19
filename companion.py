@@ -190,8 +190,8 @@ def companion_response(context: dict) -> str:
     if "how are you" in text.lower():
         responses = [
             f"Running at peak efficiency, as always. More importantly — how are you, {user_name}?",
-            f"All systems nominal. But I'm more interested in how your day is going.",
-            f"Excellent, now that you're here. What can I do for you?",
+            "All systems nominal. But I'm more interested in how your day is going.",
+            "Excellent, now that you're here. What can I do for you?",
         ]
         return random.choice(responses)
 

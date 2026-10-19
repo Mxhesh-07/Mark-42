@@ -1,39 +1,43 @@
-pyaudio
-google-genai
-google-generativeai
-pillow
-requests
-beautifulsoup4
-playwright
-pyautogui
-pyperclip
-opencv-python
-numpy
-mss
-psutil
-send2trash
-comtypes
-pycaw
-win10toast
+# Pinned for reproducible installs. Bump deliberately, then re-run: pytest -q
+# Windows-only packages (pyaudio, pycaw, comtypes, win10toast, pyautogui,
+# pyperclip, PyOpenGL, keyboard) are installed normally on Windows.
+
+pyaudio==0.2.14
+google-genai==1.68.0
+google-generativeai==0.8.6
+pillow==12.3.0
+requests==2.32.5
+beautifulsoup4==4.14.3
+playwright==1.58.0
+pyautogui==0.9.54
+pyperclip==1.11.0
+opencv-python==4.10.0.84
+numpy==1.26.4
+mss==10.1.0
+psutil==7.2.1
+send2trash==2.1.0
+comtypes==1.4.14
+pycaw==20251023
+win10toast==0.9
 # win10toast imports pkg_resources, which setuptools>=81 removed.
 # Keep setuptools below 81 or Windows toast notifications break.
-setuptools<81
-duckduckgo-search
-youtube-transcript-api
+setuptools==80.10.2
+duckduckgo-search==8.1.1
+youtube-transcript-api==1.2.4
 # Speaker recognition (see voice_id.py). resemblyzer is the default backend and
 # itself pulls in torch, librosa, scipy and webrtcvad. speechbrain is only an
 # optional alternative backend, so it is intentionally not required here.
-resemblyzer
+resemblyzer==0.1.4
 # Voice-activity detection used by the noise gate in main.py.
-webrtcvad
-torch
-yfinance
-pytesseract
-pygame
-PyOpenGL
-PyOpenGL-accelerate
-spotipy
-SpeechRecognition
-pyttsx3
-keyboard
-ddgs
+webrtcvad==2.0.10
+torch==2.13.0
+yfinance==1.7.0
+pytesseract==0.3.13
+pygame==2.6.1
+PyOpenGL==3.1.10
+PyOpenGL-accelerate==3.1.10
+spotipy==2.26.0
+SpeechRecognition==3.14.5
+pyttsx3==2.99
+keyboard==0.13.5
+ddgs==9.11.4

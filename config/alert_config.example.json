@@ -1,0 +1,9 @@
+{
+  "_comment": "Copy to config/alert_config.json (gitignored - it holds personal contact details).",
+  "user_phone": "+10000000000",
+  "enabled": true,
+  "whatsapp_on_important": true,
+  "toast_on_important": true,
+  "check_interval": 60,
+  "alerted_email_ids": []
+}

@@ -1,0 +1,7 @@
+{
+  "_comment": "Copy to config/audio.json (gitignored - device names are machine specific).",
+  "input_device": "microphone device name, or null to use the system default",
+  "mic_level": 0.75,
+  "noise_gate": true,
+  "vad_aggression": 3
+}

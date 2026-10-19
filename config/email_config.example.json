@@ -1,0 +1,11 @@
+{
+  "_comment": "Copy to config/email_config.json (gitignored). Use an app password, never your account password.",
+  "email": "you@example.com",
+  "password": "APP_PASSWORD",
+  "provider": "gmail",
+  "server": "imap.gmail.com",
+  "imap_server": "imap.gmail.com",
+  "imap_port": 993,
+  "smtp_server": "smtp.gmail.com",
+  "smtp_port": 465
+}

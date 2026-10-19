@@ -1,0 +1,7 @@
+{
+  "_comment": "Copy to config/api_keys.json and fill in. That file is gitignored - never commit real keys.",
+  "gemini_api_key": "PASTE_YOUR_GEMINI_API_KEY",
+  "groq_api_key": "PASTE_OPTIONAL_GROQ_KEY",
+  "openrouter_api_key": "PASTE_OPTIONAL_OPENROUTER_KEY",
+  "camera_index": 0
+}

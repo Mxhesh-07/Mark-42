@@ -1,0 +1,26 @@
+# Tooling configuration. Deliberately only [tool.*] sections: the project is run
+# from source (see setup.py), not installed as a package.
+
+[tool.ruff]
+line-length    = 120
+target-version = "py310"
+# genai_env/ and mediapipe_env/ are already in .gitignore, which ruff respects.
+
+[tool.ruff.lint]
+# Start with rules that catch real defects, not style. Expand gradually.
+#   E9  syntax errors            F821 undefined names
+#   F811 redefinition            F823 local used before assignment
+#   F541 f-string without placeholders
+select = ["E9", "F541", "F811", "F821", "F823"]
+
+[tool.ruff.lint.per-file-ignores]
+# These flag a parameter that intentionally (and harmlessly) shadows a module
+# name — `time` in add_event(..., time, ...) and `memory` in save_memory(memory).
+# They are part of the public call signature, so the names stay.
+"business_tools.py"      = ["F811"]
+"memory/memory_manager.py" = ["F811"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts   = "-q"
+filterwarnings = ["ignore::UserWarning"]

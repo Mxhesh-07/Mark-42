@@ -1,0 +1,6 @@
+# Development / CI dependencies only. Deliberately small: the test suite covers
+# the pure, cross-platform logic (agent/, memory helpers, voice_id helpers) and
+# must not pull in torch, playwright or the Windows-only packages.
+pytest==8.4.2
+ruff==0.17.1
+numpy==1.26.4

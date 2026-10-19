@@ -492,7 +492,7 @@ Be specific and actionable. If you see an error message, quote it exactly."""
         )
 
         analysis = response.text.strip()
-        print(f"[Code] ✅ Screen analysis complete")
+        print("[Code] ✅ Screen analysis complete")
 
         try:
             screenshot_path.unlink()

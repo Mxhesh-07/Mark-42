@@ -57,7 +57,6 @@ except Exception:  # keep the app bootable if the module is missing
         return ""
 
 from memory.memory_extractor import extract_memory
-from memory.memory_manager import update_memory
 
 from memory import AIMemory
 from voice_id import (

@@ -220,7 +220,7 @@ def _click(x: int = None, y: int = None, button: str = "left",
         return f"Clicked ({x}, {y}) with {button} button"
 
     pyautogui.click(button=button, clicks=clicks)
-    return f"Clicked at current position"
+    return "Clicked at current position"
 
 
 def _hotkey(*keys) -> str:

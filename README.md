@@ -1,5 +1,9 @@
 # Mark-42 — J.A.R.V.I.S.
 
+[![CI](https://github.com/Mxhesh-07/Mark-42/actions/workflows/ci.yml/badge.svg)](https://github.com/Mxhesh-07/Mark-42/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
+
 A voice-driven, always-on AI assistant for Windows, inspired by Iron Man's J.A.R.V.I.S.
 It listens, thinks, and actually *acts*: it launches and drives your apps, reads your
 screen, browses the web, manages files, keeps memory of you, watches your inbox, and
@@ -83,6 +87,25 @@ Get free keys and paste them into `config/api_keys.json` (or set the env vars):
 
 ---
 
+## Safety & autonomy
+
+Because Mark-42 can drive your machine, every tool call passes through one gate
+(`agent/policy.py`) before it runs. The design is deliberately **fail-closed**.
+
+| Control | What it does |
+|---------|--------------|
+| **Three levels** | `allow` runs; `confirm` needs your explicit OK (and is denied when nobody is there to give it); `block` never runs. |
+| **Kill switch** | A sentinel file (`memory/AUTONOMY_OFF`) or an in-process event stops an in-flight agent immediately. |
+| **Path sandbox** | File tools are confined to allowlisted roots (`sandbox.roots` in `config/autonomy.json`); symlinks and `..` are resolved *before* the check, so neither can escape. |
+| **Command analysis** | Shell commands are classified: read-only ones run, destructive ones (recursive delete, `format`, `diskpart`, `reg delete`, …) are refused, and anything chained or redirected must be confirmed. |
+| **Rate limits** | Per-tool token buckets plus a global action budget stop a runaway loop from hammering a single tool. |
+| **Tamper-evident audit log** | Every decision is appended to an append-only JSONL log, hash-chained so a later edit, reorder or deletion is detectable: `python -m agent.audit verify`. |
+
+Policy lives in `config/autonomy.json` (written with safe defaults on first run) and is
+read-only to the model — the assistant cannot widen its own permissions.
+
+---
+
 ## Project layout
 
 ```
@@ -105,16 +128,29 @@ Mark-XXX-main/
 ├── hologram.py             # native OpenGL 3D hologram viewer
 ├── hologram_gen.py         # AI model builder (turns a prompt into a 3D model)
 ├── hologram_models.py      # built-in object library + model persistence
-├── agent/                  # planner, executor, task queue, error handler
+├── agent/                  # planner, executor, task queue, policy gate, audit log
+│   ├── policy.py           # the permission gate + kill switch
+│   ├── sandbox.py          # A2: filesystem allowlist for file tools
+│   ├── command_policy.py   # A3: classify shell commands before they run
+│   ├── ratelimit.py        # A9: per-tool token buckets
+│   ├── audit.py            # append-only, hash-chained JSONL audit log
+│   └── atomic.py           # D6: crash-safe (atomic) state-file writes
 ├── actions/                # the actual capabilities (see below)
 ├── memory/                 # short/long-term memory, config manager
 ├── core/                   # core prompt / system instructions
 ├── prompts/                # personality prompt
 ├── config/
 │   ├── providers.json      # tier-2 provider configuration
+│   ├── autonomy.json       # permission levels, sandbox roots, rate limits
+│   ├── *.example.json      # templates for the gitignored configs
 │   ├── audio.json          # mic device/level + gate tuning — gitignored
 │   └── api_keys.json       # YOUR KEYS — gitignored, never committed
-├── requirements.txt        # main (Windows desktop) dependencies
+├── tests/                  # pytest suite (policy, sandbox, audit, voice_id, …)
+├── .github/                # CI workflow (ruff + pytest, Windows + Ubuntu)
+├── requirements.txt        # main (Windows desktop) dependencies, pinned
+├── requirements-dev.txt    # lint/test dependencies (no heavy imports)
+├── pyproject.toml          # ruff + pytest configuration
+├── LICENSE                 # MIT
 ├── requirements-cloud.txt  # minimal deps for the cloud monitor
 ├── setup.py                # one-shot installer (requirements + Playwright)
 └── setup_cloud.sh          # Oracle Cloud/Ubuntu setup script
@@ -163,7 +199,7 @@ pip install -r requirements.txt
 python -m playwright install
 
 # 2. add your keys
-#    create config/api_keys.json (see below)
+#    copy config/api_keys.example.json -> config/api_keys.json and fill it in
 
 # 3. run
 python -X utf8 main.py
@@ -186,6 +222,7 @@ Only `gemini_api_key` is required. The other fields enable tier-2 failover and a
 
 Other gitignored config files (created as you use those features): `email_config.json`,
 `alert_config.json`, `spotify_config.json`, `audio.json` (microphone + noise gate).
+Each one has a checked-in `*.example.json` template in `config/` — copy it and fill it in.
 
 ---
 
@@ -274,14 +311,33 @@ See `setup_cloud.sh`.
 |------|:--------:|---------|
 | `config/api_keys.json` | ❌ gitignored | Gemini + tier-2 provider keys |
 | `config/providers.json` | ✅ | Tier-2 provider list, models, timeouts |
+| `config/autonomy.json` | ✅ | Permission levels, sandbox roots, rate limits |
 | `config/email_config.json` | ❌ gitignored | IMAP/SMTP credentials |
 | `config/alert_config.json` | ❌ gitignored | Alert phone number, enable flag |
 | `config/spotify_config.json` | ❌ gitignored | Spotify client id/secret |
 | `config/audio.json` | ❌ gitignored | Mic device/level + noise-gate tuning |
+| `config/*.example.json` | ✅ | Templates for the gitignored configs |
 
 To add or change a tier-2 model, edit `config/providers.json` — **no code changes needed**.
 Set `"discover": true` on a provider to auto-list models from `GET {base_url}/models`
 (used for Ollama, which needs no key).
+
+---
+
+## Development
+
+```bash
+pip install -r requirements-dev.txt    # pytest, ruff and numpy only
+python -m pytest -q                    # 86 tests, no heavy imports
+python -m ruff check .                 # lint (config in pyproject.toml)
+python -m compileall -q main.py agent  # syntax check
+python -m agent.audit verify           # confirm the audit log is untampered
+```
+
+The suite covers the cross-platform logic — the permission gate, sandbox, command
+classifier, rate limiter, audit chain, atomic writes and the speaker-recognition
+helpers — and deliberately imports nothing Windows-only, so it runs unchanged on
+Linux. CI runs ruff and pytest on **Windows and Ubuntu** (`.github/workflows/ci.yml`).
 
 ---
 
@@ -303,3 +359,5 @@ This repository intentionally tracks **no** credentials:
 This project can control your computer (mouse, keyboard, apps, files, shell) and can
 send messages/alerts on your behalf. Use it responsibly and only on machines and
 accounts you own or are authorized to automate.
+
+Released under the [MIT License](LICENSE).
