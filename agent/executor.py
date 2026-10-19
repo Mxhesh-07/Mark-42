@@ -12,7 +12,7 @@ from typing import Callable
 from agent.planner       import create_plan, replan
 from agent.error_handler import analyze_error, generate_fix, ErrorDecision
 from agent.reflector     import decide_next_step, verify_goal
-from agent import audit, policy
+from agent import audit, policy, untrusted
 from agent.policy        import Level
 
 
@@ -176,6 +176,14 @@ def _inject_context(params: dict, tool: str, step_results: dict, goal: str = "")
             ]
             if all_results:
                 combined = "\n\n---\n\n".join(all_results)
+                # A5: fetched content about to become a file write is the
+                # highest-risk path for an injection, so neutralise it first.
+                findings = untrusted.scan(combined)
+                if findings:
+                    labels = ", ".join(sorted({f["label"] for f in findings}))
+                    print(f"[Executor] 🛡️ Neutralised {len(findings)} instruction-like "
+                          f"pattern(s) in fetched content: {labels}")
+                combined = untrusted.safe_for_injection(combined)
                 translated = _translate_to_goal_language(combined, goal)
                 params["content"] = translated
                 print("[Executor] 💉 Injected + translated content")
@@ -489,7 +497,8 @@ class AgentExecutor:
             ok, result = self._run_action(tool, params, desc, speak, cancel_flag)
             history.append({
                 "tool": tool, "parameters": params, "description": desc,
-                "observation": result, "ok": ok,
+                # A5: third-party content enters model context as tagged data.
+                "observation": untrusted.observation(tool, result), "ok": ok,
             })
             actions_taken.append({"tool": tool, "parameters": params, "description": desc})
             self._journal({"tool": tool, "parameters": params, "ok": ok,
@@ -593,7 +602,8 @@ class AgentExecutor:
                     ok, result = self._run_action(tool, params, desc, speak, cancel_flag)
                     history.append({
                         "tool": tool, "parameters": params, "description": desc,
-                        "observation": result, "ok": ok,
+                        # A5: third-party content enters model context as tagged data.
+                        "observation": untrusted.observation(tool, result), "ok": ok,
                     })
                     actions_taken.append({"tool": tool, "parameters": params,
                                           "description": desc})

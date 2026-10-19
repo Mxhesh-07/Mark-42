@@ -27,6 +27,17 @@ try:
 except Exception as _quota_err:  # never block startup
     print(f"[Quota] fallback not installed: {_quota_err}")
 
+# --- structured logging (C1) --------------------------------------------------
+# Console output is unchanged; every record is also written as one JSON line to
+# logs/ so a bad turn can be inspected afterwards. Never blocks startup.
+try:
+    from agent import log as _structured_log
+    _structured_log.configure(
+        json_path=Path(__file__).resolve().parent / "logs" / "jarvis.jsonl"
+    )
+except Exception as _log_err:  # pragma: no cover
+    print(f"[Log] structured logging off: {_log_err}")
+
 from ui import JarvisUI
 from memory.memory_manager import load_memory, update_memory, format_memory_for_prompt
 

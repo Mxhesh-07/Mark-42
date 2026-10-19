@@ -53,6 +53,13 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Callable, Optional, Sequence
 
+# Optional dependency on the agent package's circuit breaker (B1). Guarded so
+# gemini_util stays usable on its own (and when frozen) if the import fails.
+try:
+    from agent import breaker as _breaker
+except Exception:  # pragma: no cover - standalone/frozen use
+    _breaker = None
+
 # --------------------------------------------------------------------------
 # Fallback chain — tried in order. Each entry is a separate free-tier bucket.
 # --------------------------------------------------------------------------
@@ -389,6 +396,18 @@ def _safe_plan(contents: Any, config: Any) -> Optional[tuple]:
         return None
 
 
+# Breaker tuning: two consecutive provider failures are enough to skip it, and
+# the cooldown before a half-open trial is short enough to notice a recovery.
+_PROVIDER_BREAKER = {"failure_threshold": 2, "recovery_timeout": 300.0}
+
+
+def _provider_breaker(pid: str):
+    """The B1 breaker for a tier-2 provider (None when the breaker is missing)."""
+    if _breaker is None:
+        return None
+    return _breaker.breaker(f"provider:{pid}", **_PROVIDER_BREAKER)
+
+
 def _provider_cooldown(err: BaseException) -> float:
     # A free model that hangs for the full timeout is almost always just slow;
     # don't pay that 60s penalty again on the next request.
@@ -469,6 +488,10 @@ def _external_candidates():
                 _log(f"{provider['id']}: no API key — tier-2 off for it "
                      f"(add \"{provider['key_field']}\" to config/api_keys.json)")
             continue
+        # B1: skip a provider whose breaker is open instead of paying a timeout.
+        circuit = _provider_breaker(provider["id"])
+        if circuit is not None and not circuit.allow():
+            continue
         for model in _provider_models(provider):
             if _cooldown_until.get(f"{provider['id']}:{model}", 0.0) <= now:
                 yield provider, model
@@ -488,6 +511,9 @@ def _external_run(plan: tuple, requested: Optional[str]) -> Optional[Any]:
             if not _provider_skippable(err):
                 raise
             _record_provider_failure(key, err)
+            circuit = _provider_breaker(provider["id"])
+            if circuit is not None:
+                circuit.record_failure()
             last = err
             continue
         if not text:
@@ -495,6 +521,9 @@ def _external_run(plan: tuple, requested: Optional[str]) -> Optional[Any]:
             last = ValueError(f"{key}: empty response")
             continue
         _record_success(key, requested)
+        circuit = _provider_breaker(provider["id"])
+        if circuit is not None:
+            circuit.record_success()
         return _TextResponse(text)
     if last is not None:
         raise last
@@ -631,6 +660,7 @@ def stats() -> dict:
                 }
                 for p in providers
             ],
+            "breakers": _breaker.snapshot() if _breaker is not None else [],
         }
 
 
@@ -640,6 +670,8 @@ def reset() -> None:
         _served.clear()
         _failed.clear()
         _discover_cache.clear()
+    if _breaker is not None:
+        _breaker.reset()
 
 
 # --------------------------------------------------------------------------

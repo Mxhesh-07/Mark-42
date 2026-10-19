@@ -79,6 +79,11 @@ handles this in two tiers:
    Only `urllib` from the standard library is used, so tier-2 adds **no dependencies**.
    Providers are opt-in: a provider without a key (except Ollama) is simply skipped.
 
+Each provider also has a **circuit breaker** (closed / open / half-open, in
+`agent/breaker.py`). Two consecutive failures open it for five minutes, so a dead
+provider is skipped instantly instead of costing a timeout on every turn; the first
+call after the cooldown probes it, and a success closes the breaker again.
+
 Get free keys and paste them into `config/api_keys.json` (or set the env vars):
 
 - Groq → https://console.groq.com (`GROQ_API_KEY`)
@@ -100,6 +105,7 @@ Because Mark-42 can drive your machine, every tool call passes through one gate
 | **Command analysis** | Shell commands are classified: read-only ones run, destructive ones (recursive delete, `format`, `diskpart`, `reg delete`, …) are refused, and anything chained or redirected must be confirmed. |
 | **Rate limits** | Per-tool token buckets plus a global action budget stop a runaway loop from hammering a single tool. |
 | **Tamper-evident audit log** | Every decision is appended to an append-only JSONL log, hash-chained so a later edit, reorder or deletion is detectable: `python -m agent.audit verify`. |
+| **Prompt-injection defense** | Text the assistant fetches (web search, pages, OCR, transcripts) is tagged as untrusted data before it reaches a model, and instruction-like spans are neutralised — including when fetched content is about to be written to a file. |
 
 Policy lives in `config/autonomy.json` (written with safe defaults on first run) and is
 read-only to the model — the assistant cannot widen its own permissions.
@@ -133,6 +139,9 @@ Mark-XXX-main/
 │   ├── sandbox.py          # A2: filesystem allowlist for file tools
 │   ├── command_policy.py   # A3: classify shell commands before they run
 │   ├── ratelimit.py        # A9: per-tool token buckets
+│   ├── breaker.py          # B1: circuit breakers for external providers
+│   ├── untrusted.py        # A5: prompt-injection defense for fetched content
+│   ├── log.py              # C1: structured logging (pretty console + JSON lines)
 │   ├── audit.py            # append-only, hash-chained JSONL audit log
 │   └── atomic.py           # D6: crash-safe (atomic) state-file writes
 ├── actions/                # the actual capabilities (see below)
@@ -328,16 +337,17 @@ Set `"discover": true` on a provider to auto-list models from `GET {base_url}/mo
 
 ```bash
 pip install -r requirements-dev.txt    # pytest, ruff and numpy only
-python -m pytest -q                    # 86 tests, no heavy imports
+python -m pytest -q                    # 159 tests, no heavy imports
 python -m ruff check .                 # lint (config in pyproject.toml)
 python -m compileall -q main.py agent  # syntax check
 python -m agent.audit verify           # confirm the audit log is untampered
 ```
 
 The suite covers the cross-platform logic — the permission gate, sandbox, command
-classifier, rate limiter, audit chain, atomic writes and the speaker-recognition
-helpers — and deliberately imports nothing Windows-only, so it runs unchanged on
-Linux. CI runs ruff and pytest on **Windows and Ubuntu** (`.github/workflows/ci.yml`).
+classifier, rate limiter, circuit breakers, prompt-injection defense, structured
+logging, audit chain, atomic writes and the speaker-recognition helpers — and
+deliberately imports nothing Windows-only, so it runs unchanged on Linux. CI runs
+ruff and pytest on **Windows and Ubuntu** (`.github/workflows/ci.yml`).
 
 ---
 
