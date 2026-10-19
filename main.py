@@ -13,6 +13,16 @@ from google import genai
 from google.genai import types
 import time
 
+# --- console encoding ---------------------------------------------------------
+# When stdout is redirected (a log file, a pipe) Windows falls back to cp1252,
+# where the status glyphs this project prints raise UnicodeEncodeError. Fixing
+# the streams here also covers the case of launching without `-X utf8`.
+try:
+    from agent import console as _console
+    _console.enable_utf8()
+except Exception:
+    pass
+
 # --- quota resilience ---------------------------------------------------------
 # Each model has its own free-tier daily bucket, and the project's old default
 # (gemini-2.5-flash-lite) is capped at ~20 requests/day — after that, memory

@@ -213,6 +213,9 @@ def verify() -> tuple[bool, str]:
 
 
 def _cli(argv: list[str]) -> int:
+    from agent import console
+
+    console.enable_utf8()
     cmd = (argv[0] if argv else "verify").lower()
     if cmd == "verify":
         ok, msg = verify()

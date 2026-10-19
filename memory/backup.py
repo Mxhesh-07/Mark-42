@@ -135,6 +135,9 @@ def restore_backup(archive, *, overwrite: bool = True) -> dict:
 
 
 def _cli(argv=None) -> int:
+    from agent import console
+
+    console.enable_utf8()
     argv = list(sys.argv[1:] if argv is None else argv)
     if not argv or argv[0] not in ("export", "restore", "info"):
         print("usage: python -m memory.backup export|restore|info [path] [--with-secrets]")

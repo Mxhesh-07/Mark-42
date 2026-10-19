@@ -193,6 +193,9 @@ def list_crashes() -> list[dict]:
 
 
 def _cli(argv=None) -> int:
+    from agent import console
+
+    console.enable_utf8()
     argv = list(sys.argv[1:] if argv is None else argv)
     if argv and argv[0] == "list":
         for item in list_crashes():

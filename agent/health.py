@@ -355,6 +355,9 @@ def serve(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
 
 
 def _cli(argv=None) -> int:
+    from agent import console
+
+    console.enable_utf8()
     argv = list(sys.argv[1:] if argv is None else argv)
     if "--serve" in argv:
         port = DEFAULT_PORT
