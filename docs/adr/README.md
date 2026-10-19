@@ -18,3 +18,4 @@ Short records of the decisions that are expensive to reverse. Newest last.
 | [0012](0012-proactivity-with-fixed-urgency.md) | Proactivity is capped by fixed urgency, budgets and quiet hours |
 | [0013](0013-confirmation-modal-and-narrow-rules.md) | A confirmation is answered in the UI, and "always allow" is narrow |
 | [0014](0014-devices-reach-last.md) | Devices is reach, and reach is the last thing to add |
+| [0015](0015-tool-contract.md) | A tool is declared, dispatched and registered, or it is not a tool |

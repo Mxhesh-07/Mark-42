@@ -44,11 +44,12 @@ def test_in_window_handles_a_window_past_midnight():
     assert clock.in_window("12:00", "22:00", "07:00") is False
 
 
-def test_deadlines_use_the_monotonic_clock():
+def test_deadlines_use_the_monotonic_clock(fake_clock):
+    ticks = fake_clock(clock)
     soon = clock.deadline(0.05)
     assert clock.due(soon) is False
     assert clock.remaining(soon) > 0
-    time.sleep(0.06)
+    ticks.advance(0.06)
     assert clock.due(soon) is True
     assert clock.remaining(soon) <= 0
 

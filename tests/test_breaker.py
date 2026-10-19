@@ -1,7 +1,5 @@
 """Circuit breakers (B1)."""
 
-import time
-
 from agent import breaker
 
 
@@ -32,11 +30,12 @@ def test_a_success_resets_the_failure_streak():
     assert b.state == breaker.CLOSED
 
 
-def test_it_goes_half_open_after_the_cooldown_then_closed_on_success():
+def test_it_goes_half_open_after_the_cooldown_then_closed_on_success(fake_clock):
+    clock = fake_clock(breaker)
     b = breaker.Breaker("x", failure_threshold=1, recovery_timeout=0.05)
     b.record_failure()
     assert b.allow() is False
-    time.sleep(0.06)
+    clock.advance(0.06)
     assert b.state == breaker.HALF_OPEN
     assert b.allow() is True          # one trial call
     assert b.allow() is False         # but only one
@@ -44,12 +43,23 @@ def test_it_goes_half_open_after_the_cooldown_then_closed_on_success():
     assert b.state == breaker.CLOSED
 
 
-def test_a_failed_probe_reopens_immediately():
+def test_a_failed_probe_reopens_immediately(fake_clock):
+    clock = fake_clock(breaker)
     b = breaker.Breaker("x", failure_threshold=1, recovery_timeout=0.05)
     b.record_failure()
-    time.sleep(0.06)
+    clock.advance(0.06)
     assert b.allow() is True
     b.record_failure()
+    assert b.state == breaker.OPEN
+    assert b.allow() is False
+
+
+def test_the_cooldown_has_not_elapsed_a_moment_before_it_is_due(fake_clock):
+    """The boundary in the other direction: at 0.04 s the cooldown still holds."""
+    clock = fake_clock(breaker)
+    b = breaker.Breaker("x", failure_threshold=1, recovery_timeout=0.05)
+    b.record_failure()
+    clock.advance(0.04)
     assert b.state == breaker.OPEN
     assert b.allow() is False
 

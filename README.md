@@ -162,6 +162,7 @@ Mark-XXX-main/
 │   ├── initiative.py       # W1: fixed-urgency triggers, caps, budgets, cooldowns
 │   ├── approval_rules.py   # W6: narrow "always allow" rules (tool + action + target)
 │   ├── devices.py          # W4: device registry, capabilities, lazy transports
+│   ├── tool_contract.py    # G3/G4: declared vs dispatched vs registered; README table
 │   ├── degrade.py          # B2: FULL → TEXT_ONLY → READ_ONLY → MONITOR ladder
 │   ├── clock.py            # B7: UTC storage, local display, monotonic timers
 │   ├── metrics.py          # C2: counters/gauges + Prometheus text
@@ -217,6 +218,48 @@ Mark-XXX-main/
 | `send_message.py`, `voice_call.py` | Messaging and voice calls |
 | `spotify_control.py` | Spotify playback control |
 | `reminder.py` | Reminders |
+
+---
+
+## Tools the model can call
+
+Generated from `main.TOOL_DECLARATIONS` and `config/autonomy.json` — do not edit
+by hand. `python -m agent.tool_contract --write` rewrites it, and CI
+(`python -m agent.tool_contract --check`) fails if it drifts.
+
+<!-- BEGIN GENERATED: tools -->
+| Tool | Policy | What it does |
+|------|--------|--------------|
+| `agent_task` | confirm | Executes complex multi-step tasks that require MULTIPLE DIFFERENT tools. |
+| `browser_control` | allow | Controls the web browser. |
+| `business` | confirm | Business tools: calendar, GitHub, mood music, document scanner, meeting scheduler, code review, health tracke… |
+| `cmd_control` | confirm | Runs CMD/terminal commands by understanding natural language. |
+| `code_helper` | confirm | Writes, edits, explains, runs, or self-builds code files. |
+| `computer_control` | confirm | Direct computer control: type text, click buttons, use keyboard shortcuts, scroll, move mouse, take screensho… |
+| `computer_settings` | confirm | Controls the computer: volume, brightness, window management, keyboard shortcuts, typing text on screen, clos… |
+| `desktop_control` | confirm | Controls the desktop. |
+| `dev_agent` | confirm | Builds complete multi-file projects from scratch. |
+| `devices` | confirm | Talks to your other devices (phone, laptop, tablet...) registered in config/devices.json. |
+| `enterprise` | confirm | Enterprise tools: task automation, email drafting, news monitoring, stock/crypto tracking, client CRM. |
+| `file_controller` | confirm | Manages files and folders. |
+| `flight_finder` | allow | Searches for flights on Google Flights and speaks the best options. |
+| `get_open_windows` | allow | Lists the windows and apps currently open on the computer. |
+| `hologram` | confirm | Holographic 3D projector. |
+| `life` | confirm | Personal life management: habits & streaks, focus/Pomodoro sessions, knowledge base (notes & links), meeting… |
+| `notification` | confirm | Check and manage notifications. |
+| `open_app` | allow | Opens an application, or brings it to the front if it is already open. |
+| `register_voice` | confirm | Enrols the current speaker's voice so JARVIS can recognise them later. |
+| `reminder` | allow | Sets a timed reminder using Windows Task Scheduler. |
+| `screen_process` | confirm | Captures and analyzes the screen or webcam image. |
+| `send_message` | confirm | Sends a text message via WhatsApp, Telegram, or other messaging platform. |
+| `smart_alert` | confirm | Configure and manage smart alerts. |
+| `spotify_control` | allow | Play music on Spotify app using system control. |
+| `startup_task` | confirm | Manages startup tasks and milestones. |
+| `weather_report` | allow | Gets real-time weather information for a city. |
+| `web_search` | allow | Searches the web for any information. |
+| `work_task` | confirm | Work productivity: tasks, emails, documents, code snippets. |
+| `youtube_video` | allow | Controls YouTube. |
+<!-- END GENERATED: tools -->
 
 ---
 
@@ -376,7 +419,7 @@ Set `"discover": true` on a provider to auto-list models from `GET {base_url}/mo
 
 ```bash
 pip install -r requirements-dev.txt    # pytest, ruff and numpy only
-python -m pytest -q                    # 562 tests, no heavy imports
+python -m pytest -q                    # 584 tests, no heavy imports
 python -m ruff check .                 # lint (config in pyproject.toml)
 python -m compileall -q main.py agent  # syntax check
 python -m agent.audit verify           # confirm the audit log is untampered
@@ -389,6 +432,7 @@ python -m agent.initiative tick        # run one initiative tick now
 python -m agent.approval_rules         # narrow "always allow" rules on file
 python -m ui.confirm                   # render the W6 panel as JSON (no display needed)
 python -m agent.devices                # registry, capability table, transport availability
+python -m agent.tool_contract --check  # tools declared == dispatched == registered
 python -m memory.backup export         # zip the runtime state (no secrets)
 ```
 

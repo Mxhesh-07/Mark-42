@@ -69,6 +69,39 @@ def _isolate(tmp_path, monkeypatch):
     self_model.reset_for_tests()
 
 
+class FakeClock:
+    """A monotonic clock the tests step by hand.
+
+    ``sleep(0.06)`` then asserting a 0.05 s deadline has passed is flaky on
+    Windows: ``time.monotonic()`` there ticks in ~15.6 ms steps, so a real 60 ms
+    wait can *measure* as 46.8 ms and the deadline wrongly looks unexpired.
+    Advancing the clock explicitly removes the race and the wall-clock wait.
+    """
+
+    def __init__(self, now: float = 1_000_000.0):
+        self.now = float(now)
+
+    def monotonic(self) -> float:
+        return self.now
+
+    def sleep(self, seconds: float) -> None:
+        self.advance(seconds)
+
+    def advance(self, seconds: float) -> None:
+        self.now += float(seconds)
+
+
+@pytest.fixture
+def fake_clock(monkeypatch):
+    """``fake_clock(agent.breaker)`` -> a FakeClock that module now reads."""
+    def _install(module):
+        clock = FakeClock()
+        monkeypatch.setattr(module, "time", clock)
+        return clock
+
+    return _install
+
+
 @pytest.fixture
 def policy_file(tmp_path, monkeypatch):
     """Point agent.policy at a throwaway autonomy.json and reset its cache."""

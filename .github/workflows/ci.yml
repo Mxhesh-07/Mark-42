@@ -37,3 +37,6 @@ jobs:
       # logic and never imports torch, playwright or a Windows-only package.
       - run: python -m pip install -r requirements-dev.txt
       - run: python -m pytest -q
+      # G3/G4: the declared tools, the dispatch branches, the policy table and
+      # the generated README table must all agree. No heavy imports needed.
+      - run: python -m agent.tool_contract --check

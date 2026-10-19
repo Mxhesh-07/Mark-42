@@ -15,6 +15,7 @@
     "flight_finder": "allow",
     "open_app": "allow",
     "browser_control": "allow",
+    "get_open_windows": "allow",
     "file_controller": "confirm",
     "computer_settings": "confirm",
     "computer_control": "confirm",
@@ -25,7 +26,17 @@
     "code_helper": "confirm",
     "dev_agent": "confirm",
     "generated_code": "confirm",
-    "devices": "confirm"
+    "devices": "confirm",
+    "register_voice": "confirm",
+    "smart_alert": "confirm",
+    "notification": "confirm",
+    "agent_task": "confirm",
+    "business": "confirm",
+    "enterprise": "confirm",
+    "life": "confirm",
+    "work_task": "confirm",
+    "startup_task": "confirm",
+    "hologram": "confirm"
   },
   "actions": {
     "file_controller": {
