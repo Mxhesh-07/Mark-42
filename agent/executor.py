@@ -75,6 +75,21 @@ def _looks_like_failure(result) -> bool:
         m in low for m in _ERROR_MARKERS
     )
 
+
+def _note_action(tool: str, started: float, ok: bool) -> None:
+    """Record one executed action for C2/C3/B2 (never raises)."""
+    ms = (time.perf_counter() - started) * 1000.0
+    try:
+        from agent import degrade, metrics, trace
+
+        metrics.observe_ms("tool.call", ms, tool=tool)
+        metrics.inc("tool.success" if ok else "tool.failure", tool=tool)
+        trace.record("action", ms=ms, ok=ok, tool=tool)
+        if ok:
+            degrade.note_success()
+    except Exception:
+        pass
+
 def _run_generated_code(description: str, speak: Callable | None = None) -> str:
     import google.generativeai as genai
 
@@ -421,6 +436,8 @@ class AgentExecutor:
                          task_id=self.task_id, goal=self._goal)
             raise _TaskAborted("the kill switch is engaged")
 
+        started = time.perf_counter()
+
         # A5: fold in (and neutralise) any injected content BEFORE the gate, so
         # the approval below binds to the arguments that will actually run.
         params, tainted = _inject_context(params, tool, self._step_results,
@@ -441,6 +458,7 @@ class AgentExecutor:
                 audit.record("action_denied", tool=tool, parameters=params,
                              level=gate.level.value, outcome=outcome,
                              detail=detail, task_id=self.task_id, goal=self._goal)
+                _note_action(tool, started, False)
                 return False, f"DENIED ({outcome}): {detail}"
 
         self._seq += 1
@@ -475,6 +493,7 @@ class AgentExecutor:
                 audit.record("action", tool=tool, parameters=params, level="allow",
                              outcome="ok", detail=str(result)[:300],
                              task_id=self.task_id, goal=self._goal)
+                _note_action(tool, started, True)
                 return True, str(result)
 
             except Exception as e:
@@ -495,6 +514,7 @@ class AgentExecutor:
 
                 if decision == ErrorDecision.SKIP:
                     print(f"[Executor] ⏭️ Skipping action {step_num}")
+                    _note_action(tool, started, True)
                     return True, "Skipped (non-critical)."
 
                 if decision == ErrorDecision.ABORT:
@@ -511,6 +531,7 @@ class AgentExecutor:
                         if not _looks_like_failure(res):
                             self._step_results[step_num] = res
                             print(f"[Executor] ✅ Action {step_num} recovered via fix")
+                            _note_action(tool, started, True)
                             return True, str(res)
                     except Exception as fix_err:
                         print(f"[Executor] ⚠️ Fix failed: {fix_err}")
@@ -518,11 +539,13 @@ class AgentExecutor:
                 audit.record("action", tool=tool, parameters=params, outcome="failed",
                              detail=error_msg[:300],
                              task_id=self.task_id, goal=self._goal)
+                _note_action(tool, started, False)
                 return False, error_msg
 
         audit.record("action", tool=tool, parameters=params, outcome="failed",
                      detail="max retries exceeded",
                      task_id=self.task_id, goal=self._goal)
+        _note_action(tool, started, False)
         return False, "Max retries exceeded"
 
     # -------------------------------------------------------- fallback path

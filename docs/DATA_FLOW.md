@@ -25,11 +25,14 @@ Where data comes from, where it goes, and what is trusted at each hop.
 
 | Boundary | Source | Trust | What limits it |
 |----------|--------|-------|----------------|
-| Voice → transcript | the room | untrusted | noise gate; optional speaker recognition labels the talker |
+| Voice → transcript | the room | untrusted | noise gate; optional speaker recognition labels the talker, and a non-owner is capped at read-only (ADR 0006) |
 | Web / email / OCR → model context | the internet | **untrusted** | treated as data, never as instructions; tools it can reach are gated |
 | Model → tool calls | Gemini | untrusted | `policy.evaluate` decides every call (ADR 0001) |
 | Tool → filesystem | `file_controller` | gated | path sandbox, deny by default (ADR 0002/0004) |
 | Tool → shell | `cmd_control` | gated | command classification, destructive commands refused (ADR 0004) |
+| Tool → network | destination tools | gated | egress allow/deny, private addresses refused (ADR 0006) |
+| Tool → generated code | `generated_code` | untrusted | run in a restricted-env subprocess, secrets stripped (ADR 0006) |
+| Confirmations | the user | trusted | bound to the effect and signed; single-use (ADR 0006) |
 | Policy | `config/autonomy.json` | trusted | local file, not writable by the model |
 
 ## Data at rest
@@ -38,8 +41,12 @@ Where data comes from, where it goes, and what is trusted at each hop.
 |------|----------|-----------|
 | API keys, mail/Spotify credentials | `config/*.json` | **yes** — gitignored, never committed |
 | Voiceprints (biometric) | `voice_profiles.json` | **yes** — gitignored |
-| Memories, alert history, companion state | `memory/`, root JSON | **yes** — gitignored |
+| Memories | `memory/jarvis.db` (SQLite, WAL) | **yes** — gitignored |
+| Memories, alert history, companion state (legacy JSON) | `memory/`, root JSON | **yes** — gitignored |
 | Audit log | `memory/audit_log.jsonl` | **yes** — gitignored, hash-chained |
+| Approval key | `memory/approval.key` | **yes** — gitignored, generated on first use |
+| Structured logs | `logs/jarvis.jsonl` | **yes** — gitignored |
+| Crash bundles | `memory/crashes/` | **yes** — gitignored, redacted on write |
 | Policy, provider list | `config/autonomy.json`, `config/providers.json` | no — tracked |
 
 ## Data leaving the machine

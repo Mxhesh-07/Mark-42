@@ -33,6 +33,34 @@ OPEN = "open"
 HALF_OPEN = "half_open"
 
 
+def _metric(name: str, breaker_name: str) -> None:
+    try:
+        from agent import metrics
+
+        metrics.inc(name, breaker=breaker_name)
+    except Exception:
+        pass
+
+
+def _on_trip(breaker_name: str) -> None:
+    """Infrastructure failure: let the degradation ladder (B2) know."""
+    try:
+        from agent import degrade
+
+        degrade.note_failure(f"breaker {breaker_name} open")
+    except Exception:
+        pass
+
+
+def _on_success(breaker_name: str) -> None:
+    try:
+        from agent import degrade
+
+        degrade.note_success()
+    except Exception:
+        pass
+
+
 class Breaker:
     """A three-state circuit breaker for one named dependency."""
 
@@ -85,6 +113,8 @@ class Breaker:
             self._trials = 0
             self._state = CLOSED
             self._total_ok += 1
+        _metric("breaker.success", self.name)
+        _on_success(self.name)
 
     def record_failure(self) -> None:
         with self._lock:
@@ -95,11 +125,15 @@ class Breaker:
                 self._trip_locked()
 
     def _trip_locked(self) -> None:
-        if self._state != OPEN:
+        first = self._state != OPEN
+        if first:
             self._trips += 1
         self._state = OPEN
         self._opened_at = time.monotonic()
         self._trials = 0
+        if first:
+            _metric("breaker.trip", self.name)
+            _on_trip(self.name)
 
     def reset(self) -> None:
         with self._lock:

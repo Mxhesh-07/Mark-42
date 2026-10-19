@@ -113,3 +113,31 @@ def test_reset_clears_the_registry():
     assert any(s["name"] == "gone" for s in breaker.snapshot())
     breaker.reset()
     assert breaker.snapshot() == []
+
+
+# --- C2 / B2: a trip is observable and feeds the degradation ladder -----------
+
+def test_a_trip_is_counted_as_a_metric():
+    from agent import metrics
+
+    breaker.Breaker("down", failure_threshold=1).record_failure()
+    assert metrics.value("breaker.trip", breaker="down") == 1
+
+
+def test_a_trip_feeds_the_degradation_ladder():
+    from agent import degrade
+
+    breaker.Breaker("down", failure_threshold=1).record_failure()
+    breaker.Breaker("worse", failure_threshold=1).record_failure()
+    assert degrade.level() != "FULL"
+
+
+def test_repeated_failures_while_open_count_the_trip_once():
+    from agent import metrics
+
+    b = breaker.Breaker("down", failure_threshold=1)
+    b.record_failure()
+    b.record_failure()
+    b.record_failure()
+    assert metrics.value("breaker.trip", breaker="down") == 1
+

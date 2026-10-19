@@ -19,19 +19,27 @@ if str(ROOT) not in sys.path:
 @pytest.fixture(autouse=True)
 def _isolate(tmp_path, monkeypatch):
     """Never touch real kill-switch, audit or approval state, and never leak
-    rate-limit/breaker/role state between tests."""
-    from agent import approval, audit, breaker, policy, ratelimit, roles
+    rate-limit/breaker/role/metrics state between tests."""
+    from agent import (approval, audit, breaker, crash, degrade, metrics, policy,
+                       ratelimit, roles, trace)
+    from memory import sql_memory
 
     monkeypatch.setattr(policy, "KILL_FILE", tmp_path / "AUTONOMY_OFF")
     monkeypatch.setattr(audit, "LOG_PATH", tmp_path / "audit_log.jsonl")
     monkeypatch.setattr(approval, "KEY_PATH", tmp_path / "approval.key")
     monkeypatch.setattr(approval, "USED_PATH", tmp_path / "approval_used.json")
+    monkeypatch.setattr(crash, "CRASH_DIR", tmp_path / "crashes")
+    monkeypatch.setattr(sql_memory, "BASE_DIR", tmp_path)
+    monkeypatch.setattr(sql_memory, "DB_PATH", tmp_path / "jarvis.db")
     audit._LAST_HASH = ""
     approval.reset_for_tests()
     policy._killed.clear()
     roles.clear()
     ratelimit.reset()
     breaker.reset()
+    metrics.reset()
+    trace.reset()
+    degrade.reset()
     yield
     audit._LAST_HASH = ""
     approval.reset_for_tests()
@@ -39,6 +47,9 @@ def _isolate(tmp_path, monkeypatch):
     roles.clear()
     ratelimit.reset()
     breaker.reset()
+    metrics.reset()
+    trace.reset()
+    degrade.reset()
 
 
 @pytest.fixture

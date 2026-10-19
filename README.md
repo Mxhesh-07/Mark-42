@@ -104,8 +104,17 @@ Because Mark-42 can drive your machine, every tool call passes through one gate
 | **Path sandbox** | File tools are confined to allowlisted roots (`sandbox.roots` in `config/autonomy.json`); symlinks and `..` are resolved *before* the check, so neither can escape. |
 | **Command analysis** | Shell commands are classified: read-only ones run, destructive ones (recursive delete, `format`, `diskpart`, `reg delete`, …) are refused, and anything chained or redirected must be confirmed. |
 | **Rate limits** | Per-tool token buckets plus a global action budget stop a runaway loop from hammering a single tool. |
+| **Voice roles** | An enrolled voice can be mapped to `owner` or `guest` (`roles` in `config/autonomy.json`). A non-owner is capped at read-only actions — and a guest can never be widened by attendance. |
+| **Signed approvals** | A `confirm` becomes a single-use token bound to a hash of the tool *and its full arguments*, shown to you as an effect ("delete C:\x\y.txt"), not a tool name. A refusal, an expiry, a tampered token or a replay authorises nothing (`agent/approval.py`). |
+| **Network egress control** | Tools that can name a destination are checked against `egress.allow` / `egress.deny`; private and loopback addresses are refused by default, so a prompt cannot make the assistant call your own services. |
+| **Sandboxed code runs** | Generated code and shell helpers run in a subprocess with a restricted environment (secrets stripped, memory/CPU limits via a Windows Job Object), not inside the assistant process. |
+| **Graceful degradation** | A four-step ladder — `FULL → TEXT_ONLY → READ_ONLY → MONITOR` — lowers the assistant's capability when infrastructure fails, and climbs back one step at a time. At `READ_ONLY` writes and shell stop; at `MONITOR` tools stop entirely. |
+| **Startup self-check** | At boot the assistant verifies policy, keys, disk headroom, breakers and memory, then probes the mic and model endpoint; it reports what is broken instead of failing mysteriously later. |
+| **Health endpoint** | A read-only, loopback-only HTTP surface (`python -m agent.health --serve`, or `JARVIS_HEALTH_PORT=8799`) exposes `/health`, `/ready`, `/status` and `/metrics`. |
+| **Observability** | Counters and gauges (`agent/metrics.py`), per-turn stage timings (`agent/trace.py`), and redacted crash bundles under `memory/crashes/` (`agent/crash.py`). |
 | **Tamper-evident audit log** | Every decision is appended to an append-only JSONL log, hash-chained so a later edit, reorder or deletion is detectable: `python -m agent.audit verify`. |
 | **Prompt-injection defense** | Text the assistant fetches (web search, pages, OCR, transcripts) is tagged as untrusted data before it reaches a model, and instruction-like spans are neutralised — including when fetched content is about to be written to a file. |
+| **Transactional memory + backup** | Memory lives in one SQLite database with a versioned schema, per-record provenance and TTLs (`memory/sql_memory.py`); `python -m memory.backup export` bundles the runtime state into one zip (secrets excluded unless asked). |
 
 Policy lives in `config/autonomy.json` (written with safe defaults on first run) and is
 read-only to the model — the assistant cannot widen its own permissions.
@@ -139,13 +148,25 @@ Mark-XXX-main/
 │   ├── sandbox.py          # A2: filesystem allowlist for file tools
 │   ├── command_policy.py   # A3: classify shell commands before they run
 │   ├── ratelimit.py        # A9: per-tool token buckets
+│   ├── egress.py           # A4: network egress allow/deny for destination tools
+│   ├── roles.py            # A8: speaker roles (owner/guest) as authority
+│   ├── approval.py         # A1: signed, single-use approvals bound to an effect
+│   ├── subprocess_sandbox.py # A11: restricted-env subprocess for generated code
 │   ├── breaker.py          # B1: circuit breakers for external providers
+│   ├── degrade.py          # B2: FULL → TEXT_ONLY → READ_ONLY → MONITOR ladder
+│   ├── clock.py            # B7: UTC storage, local display, monotonic timers
+│   ├── metrics.py          # C2: counters/gauges + Prometheus text
+│   ├── trace.py            # C3: per-turn stage timings
+│   ├── health.py           # B4/C4: self-check + /health /ready /status /metrics
+│   ├── crash.py            # C6: redacted crash bundles
 │   ├── untrusted.py        # A5: prompt-injection defense for fetched content
 │   ├── log.py              # C1: structured logging (pretty console + JSON lines)
 │   ├── audit.py            # append-only, hash-chained JSONL audit log
 │   └── atomic.py           # D6: crash-safe (atomic) state-file writes
 ├── actions/                # the actual capabilities (see below)
 ├── memory/                 # short/long-term memory, config manager
+│   ├── sql_memory.py       # D1–D3: SQLite store, versioned schema, provenance
+│   └── backup.py           # D4: zip export/restore of runtime state
 ├── core/                   # core prompt / system instructions
 ├── prompts/                # personality prompt
 ├── config/
@@ -320,7 +341,7 @@ See `setup_cloud.sh`.
 |------|:--------:|---------|
 | `config/api_keys.json` | ❌ gitignored | Gemini + tier-2 provider keys |
 | `config/providers.json` | ✅ | Tier-2 provider list, models, timeouts |
-| `config/autonomy.json` | ✅ | Permission levels, sandbox roots, rate limits |
+| `config/autonomy.json` | ✅ | Permission levels, sandbox roots, rate limits, egress, roles |
 | `config/email_config.json` | ❌ gitignored | IMAP/SMTP credentials |
 | `config/alert_config.json` | ❌ gitignored | Alert phone number, enable flag |
 | `config/spotify_config.json` | ❌ gitignored | Spotify client id/secret |
@@ -337,15 +358,21 @@ Set `"discover": true` on a provider to auto-list models from `GET {base_url}/mo
 
 ```bash
 pip install -r requirements-dev.txt    # pytest, ruff and numpy only
-python -m pytest -q                    # 159 tests, no heavy imports
+python -m pytest -q                    # 330 tests, no heavy imports
 python -m ruff check .                 # lint (config in pyproject.toml)
 python -m compileall -q main.py agent  # syntax check
 python -m agent.audit verify           # confirm the audit log is untampered
+python -m agent.health                 # one-shot startup self-check
+python -m agent.health --serve         # read-only /health /ready /status /metrics
+python -m agent.crash list             # recent crash bundles (redacted)
+python -m memory.backup export         # zip the runtime state (no secrets)
 ```
 
 The suite covers the cross-platform logic — the permission gate, sandbox, command
 classifier, rate limiter, circuit breakers, prompt-injection defense, structured
-logging, audit chain, atomic writes and the speaker-recognition helpers — and
+logging, audit chain, atomic writes, egress control, voice roles, signed approvals,
+the degradation ladder, metrics/tracing, health checks, crash bundles, the SQLite
+memory store, backup/restore and the speaker-recognition helpers — and
 deliberately imports nothing Windows-only, so it runs unchanged on Linux. CI runs
 ruff and pytest on **Windows and Ubuntu** (`.github/workflows/ci.yml`).
 

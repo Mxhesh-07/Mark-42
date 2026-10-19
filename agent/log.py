@@ -30,6 +30,7 @@ from pathlib import Path
 
 _state = threading.local()
 _configured = False
+_json_path: Path | None = None
 
 _LEVELS = {
     "debug": logging.DEBUG,
@@ -113,7 +114,7 @@ class _JsonFormatter(logging.Formatter):
 def configure(*, level=logging.INFO, json_path=None, console: bool = True,
               force: bool = False) -> None:
     """Install the handlers once. Safe to call more than once."""
-    global _configured
+    global _configured, _json_path
     if _configured and not force:
         return
 
@@ -139,8 +140,14 @@ def configure(*, level=logging.INFO, json_path=None, console: bool = True,
             to_file.setFormatter(_JsonFormatter())
             to_file.addFilter(_TurnFilter())
             root.addHandler(to_file)
+            _json_path = path
 
     _configured = True
+
+
+def json_log_path() -> Path | None:
+    """Where structured records are being written, if anywhere."""
+    return _json_path
 
 
 def get_logger(name: str) -> logging.Logger:

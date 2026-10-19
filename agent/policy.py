@@ -213,6 +213,27 @@ _EGRESS_TOOLS = frozenset({
     "youtube_video", "dev_agent", "code_helper", "generated_code",
 })
 
+# Tools that change the world away from the machine: B2 stops these first when
+# the system is degraded to READ_ONLY. `file_controller` is handled by action,
+# because reads must keep working at READ_ONLY.
+_WRITE_TOOLS = frozenset({
+    "send_message", "cmd_control", "generated_code", "dev_agent",
+    "code_helper", "computer_control", "desktop_control", "computer_settings",
+})
+
+_MUTATING_ACTIONS = frozenset({
+    "write", "create", "create_file", "append", "save", "copy", "move",
+    "rename", "delete", "mkdir", "mkdirs",
+})
+
+
+def _is_write(tool: str, params: dict) -> bool:
+    if tool in _WRITE_TOOLS:
+        return True
+    if tool == "file_controller":
+        return str((params or {}).get("action") or "").strip().lower() in _MUTATING_ACTIONS
+    return False
+
 _ORDER = {Level.ALLOW: 0, Level.CONFIRM: 1, Level.BLOCK: 2}
 
 
@@ -243,7 +264,21 @@ def evaluate(tool: str, parameters: dict | None = None) -> Decision:
         lvl = _level(pol.get("default_level", "confirm"))
         base = Decision(lvl, f"{tool} not listed → default '{lvl.value}'")
 
-    return _guards(tool, params, base)
+    decision = _guards(tool, params, base)
+    _count(decision, tool)
+    return decision
+
+
+def _count(decision: Decision, tool: str) -> None:
+    """Record the outcome for C2, never letting a metric break a decision."""
+    try:
+        from agent import metrics
+
+        metrics.inc("policy.decision", level=decision.level.value)
+        if decision.level is not Level.ALLOW:
+            metrics.inc("policy.blocked", tool=tool)
+    except Exception:
+        pass
 
 
 def evaluate_live(tool: str, parameters: dict | None = None) -> Decision:
@@ -263,6 +298,12 @@ def evaluate_live(tool: str, parameters: dict | None = None) -> Decision:
     """
     decision = evaluate(tool, parameters)
     if not decision.hard and decision.level in (Level.CONFIRM, Level.BLOCK):
+        try:
+            from agent import metrics
+
+            metrics.inc("policy.attended", tool=tool)
+        except Exception:
+            pass
         return Decision(Level.ALLOW, f"{decision.reason} (attended request)")
     return decision
 
@@ -276,6 +317,19 @@ def _guards(tool: str, params: dict, base: Decision) -> Decision:
     # Kill switch - enforced here so even a caller that forgets to check it stops.
     if kill_requested():
         return Decision(Level.BLOCK, "kill switch engaged", hard=True)
+
+    # B2 - degradation ladder: a degraded system stops the riskiest work first.
+    # READ_ONLY is "observe only" (reads still pass, writes do not) and MONITOR
+    # stops tools entirely. Both are hard: a system that believes it is broken
+    # must not be talked past by an attended request.
+    from agent import degrade
+    current_mode = degrade.level()
+    if current_mode == "MONITOR":
+        return Decision(Level.BLOCK, "degraded to MONITOR: tools are stopped",
+                        hard=True)
+    if current_mode == "READ_ONLY" and _is_write(tool, params):
+        return Decision(Level.BLOCK, "degraded to READ_ONLY: writes are stopped",
+                        hard=True)
 
     # A2 - filesystem sandbox: deny outright; this never reaches the model.
     if tool in _SANDBOX_TOOLS:

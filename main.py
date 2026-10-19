@@ -1,6 +1,7 @@
 import asyncio
 import threading
 import json
+import os
 import re
 import sys
 import traceback
@@ -37,6 +38,39 @@ try:
     )
 except Exception as _log_err:  # pragma: no cover
     print(f"[Log] structured logging off: {_log_err}")
+
+# --- crash bundles (C6) and the startup self-check (B4) ------------------------
+# An uncaught exception writes a redacted bundle to memory/crashes/ before the
+# process dies, and the self-check reports a broken install at startup instead
+# of letting it surface as a mystery three commands later. The full probe (mic,
+# model endpoint) runs on a daemon thread so it cannot delay the window.
+try:
+    from agent import crash as _crash
+    _crash.install()
+except Exception as _crash_err:  # pragma: no cover
+    print(f"[Crash] bundle handler off: {_crash_err}")
+
+try:
+    from agent import health as _health
+
+    def _startup_self_check() -> None:
+        try:
+            _health.self_check(full=True)
+        except Exception:
+            pass
+
+    threading.Thread(target=_startup_self_check, name="JarvisSelfCheck",
+                     daemon=True).start()
+
+    _health_port = os.environ.get("JARVIS_HEALTH_PORT")
+    if _health_port:
+        try:
+            _health.serve(port=int(_health_port))
+            print(f"[Health] read-only endpoint on http://127.0.0.1:{_health_port}")
+        except Exception as _health_bind:
+            print(f"[Health] endpoint not started: {_health_bind}")
+except Exception as _health_err:  # pragma: no cover
+    print(f"[Health] self-check off: {_health_err}")
 
 from ui import JarvisUI
 from memory.memory_manager import load_memory, update_memory, format_memory_for_prompt
@@ -1382,6 +1416,7 @@ class JarvisLive:
         loop   = asyncio.get_event_loop()
         result = "Done."
         failed = False
+        _tool_started = time.perf_counter()
 
         try:
             if name == "open_app":
@@ -1953,6 +1988,18 @@ class JarvisLive:
         if not failed:
             self.ui.jarvis_think("result", str(result))
 
+        _tool_ms = (time.perf_counter() - _tool_started) * 1000.0
+        try:
+            from agent import degrade as _degrade, metrics as _metrics, trace as _trace
+
+            _metrics.observe_ms("tool.call", _tool_ms, tool=name)
+            _metrics.inc("tool.failure" if failed else "tool.success", tool=name)
+            _trace.record("tool", ms=_tool_ms, ok=not failed, tool=name)
+            if not failed:
+                _degrade.note_success()
+        except Exception:
+            pass
+
         return types.FunctionResponse(
             id=fc.id,
             name=name,
@@ -2272,6 +2319,14 @@ class JarvisLive:
                             out_buf = []
 
                             if full_in:
+                                # C3: everything logged from here until the next
+                                # turn shares one id, so a bad turn can be replayed.
+                                try:
+                                    from agent import log as _jlog
+
+                                    _jlog.set_turn()
+                                except Exception:
+                                    pass
                                 self.ui.write_log(f"You: {full_in}")
                                 self.ui.jarvis_think("in", full_in)
 

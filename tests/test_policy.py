@@ -129,3 +129,59 @@ def test_status_reports_the_new_guards(policy_file):
     status = policy.status()
     assert "egress" in status
     assert "roles" in status
+
+
+# --- B2: the degradation ladder is enforced in the gate -----------------------
+
+def test_read_only_blocks_a_file_write(policy_file):
+    from agent import degrade
+
+    degrade.set_level("READ_ONLY")
+    decision = policy.evaluate("file_controller", {"action": "write", "path": "x.txt"})
+    assert decision.level is Level.BLOCK and decision.hard
+
+
+def test_read_only_still_allows_a_file_read(policy_file):
+    from agent import degrade
+
+    degrade.set_level("READ_ONLY")
+    assert policy.evaluate("file_controller", {"action": "read", "path": "x.txt"}).level is Level.ALLOW
+
+
+def test_read_only_blocks_messages_and_shell(policy_file):
+    from agent import degrade
+
+    degrade.set_level("READ_ONLY")
+    assert policy.evaluate("send_message", {"to": "a@b.com"}).level is Level.BLOCK
+    assert policy.evaluate("cmd_control", {"command": "dir"}).level is Level.BLOCK
+
+
+def test_monitor_stops_every_tool(policy_file):
+    from agent import degrade
+
+    degrade.set_level("MONITOR")
+    assert policy.evaluate("web_search", {}).level is Level.BLOCK
+
+
+def test_a_degraded_block_is_not_liftable_by_attendance(policy_file):
+    from agent import degrade
+
+    degrade.set_level("READ_ONLY")
+    decision = policy.evaluate_live("send_message", {"to": "a@b.com"})
+    assert decision.level is Level.BLOCK and decision.hard
+
+
+# --- C2: the gate records what it decided -------------------------------------
+
+def test_evaluate_records_a_metric(policy_file):
+    from agent import metrics
+
+    policy.evaluate("web_search", {})
+    assert metrics.value("policy.decision", level="allow") >= 1
+
+
+def test_attendance_is_recorded(policy_file):
+    from agent import metrics
+
+    policy.evaluate_live("send_message", {"to": "a@b.com"})
+    assert metrics.value("policy.attended", tool="send_message") == 1

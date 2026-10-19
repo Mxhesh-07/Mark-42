@@ -41,9 +41,10 @@ def test_a_token_does_not_verify_for_a_different_tool():
 
 def test_an_expired_token_does_not_verify():
     man = approval.manifest("cmd_control", {"command": "dir"}, ttl_s=1.0)
-    token = man["token"]
-    parts = token.split(".", 2)
-    expired = f"{time.time() - 1}.{parts[1]}.{parts[2]}"
+    parts = man["token"].split(".", 2)
+    # The expiry field is integer milliseconds, as a float would contain a ".",
+    # which is also the token's field separator.
+    expired = f"{int((time.time() - 5) * 1000)}.{parts[1]}.{parts[2]}"
     ok, why = approval.verify(expired, "cmd_control", man["args"])
     assert not ok and "expired" in why
 
@@ -84,3 +85,30 @@ def test_effect_names_the_command_for_cmd_control():
 def test_effect_names_the_recipient_for_a_message():
     man = approval.manifest("send_message", {"to": "sam@example.com", "message": "hi"})
     assert "sam@example.com" in man["effect"]
+
+
+# --- C2: approvals are observable --------------------------------------------
+
+def test_a_grant_is_counted():
+    from agent import metrics
+
+    man = approval.manifest("cmd_control", {"command": "dir"})
+    assert approval.authorize(man, True)[0] is True
+    assert metrics.value("approval", outcome="granted") == 1
+
+
+def test_a_refusal_is_counted():
+    from agent import metrics
+
+    man = approval.manifest("cmd_control", {"command": "dir"})
+    assert approval.authorize(man, False)[0] is False
+    assert metrics.value("approval", outcome="denied") == 1
+
+
+def test_a_forged_token_is_counted_as_invalid():
+    from agent import metrics
+
+    man = approval.manifest("cmd_control", {"command": "dir"})
+    man["args_digest"] = "0" * 64
+    assert approval.authorize(man, True)[0] is False
+    assert metrics.value("approval", outcome="invalid") == 1

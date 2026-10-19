@@ -261,16 +261,29 @@ def verify(token, tool, params=None, *, args_digest: str | None = None) -> tuple
     return True, "approved"
 
 
+def _count(outcome: str, why: str = "") -> None:
+    try:
+        from agent import metrics
+
+        metrics.inc("approval", outcome=outcome)
+    except Exception:
+        pass
+
+
 def authorize(man: dict, granted: bool) -> tuple[bool, str]:
     """Turn a user's yes/no into a verified, single-use approval."""
     if not granted:
+        _count("denied")
         return False, "not approved by the user"
     if not isinstance(man, dict):
+        _count("invalid")
         return False, "no approval manifest"
     ok, why = verify(man.get("token"), man.get("tool"), args_digest=man.get("args_digest"))
     if not ok:
+        _count("invalid")
         return False, why
     consume(man.get("nonce"))
+    _count("granted")
     return True, why
 
 
