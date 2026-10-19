@@ -109,8 +109,9 @@ Because Mark-42 can drive your machine, every tool call passes through one gate
 | **Network egress control** | Tools that can name a destination are checked against `egress.allow` / `egress.deny`; private and loopback addresses are refused by default, so a prompt cannot make the assistant call your own services. |
 | **Sandboxed code runs** | Generated code and shell helpers run in a subprocess with a restricted environment (secrets stripped, memory/CPU limits via a Windows Job Object), not inside the assistant process. |
 | **Graceful degradation** | A four-step ladder — `FULL → TEXT_ONLY → READ_ONLY → MONITOR` — lowers the assistant's capability when infrastructure fails, and climbs back one step at a time. At `READ_ONLY` writes and shell stop; at `MONITOR` tools stop entirely. |
-| **Startup self-check** | At boot the assistant verifies policy, keys, disk headroom, breakers and memory, then probes the mic and model endpoint; it reports what is broken instead of failing mysteriously later. |
+| **Startup self-check** | At boot the assistant verifies policy, keys, disk headroom, breakers and memory, then reports what is broken instead of failing mysteriously later. The microphone probe is *not* part of it (`/health?full=1` or `python -m agent.health --full` runs it on demand), because it is the one check that initialises PortAudio and must never race the audio subsystem. |
 | **Health endpoint** | A read-only, loopback-only HTTP surface (`python -m agent.health --serve`, or `JARVIS_HEALTH_PORT=8799`) exposes `/health`, `/ready`, `/status` and `/metrics`. |
+| **Self-model** | A stable identity plus a per-domain confidence average fed by real outcomes (`core/self.py`). It is injected into the prompt so the assistant can name a blocked capability, its policy and a weak domain instead of guessing - and it is written once, so a restart does not rewrite who it is. |
 | **Observability** | Counters and gauges (`agent/metrics.py`), per-turn stage timings (`agent/trace.py`), and redacted crash bundles under `memory/crashes/` (`agent/crash.py`). |
 | **Tamper-evident audit log** | Every decision is appended to an append-only JSONL log, hash-chained so a later edit, reorder or deletion is detectable: `python -m agent.audit verify`. |
 | **Prompt-injection defense** | Text the assistant fetches (web search, pages, OCR, transcripts) is tagged as untrusted data before it reaches a model, and instruction-like spans are neutralised — including when fetched content is about to be written to a file. |
@@ -159,6 +160,8 @@ Mark-XXX-main/
 │   ├── trace.py            # C3: per-turn stage timings
 │   ├── health.py           # B4/C4: self-check + /health /ready /status /metrics
 │   ├── crash.py            # C6: redacted crash bundles
+│   ├── console.py          # UTF-8-safe stdout/stderr for the documented CLIs
+│   ├── audio.py            # one serialized door for PortAudio instances
 │   ├── untrusted.py        # A5: prompt-injection defense for fetched content
 │   ├── log.py              # C1: structured logging (pretty console + JSON lines)
 │   ├── audit.py            # append-only, hash-chained JSONL audit log
@@ -167,7 +170,9 @@ Mark-XXX-main/
 ├── memory/                 # short/long-term memory, config manager
 │   ├── sql_memory.py       # D1–D3: SQLite store, versioned schema, provenance
 │   └── backup.py           # D4: zip export/restore of runtime state
-├── core/                   # core prompt / system instructions
+├── core/                   # operating prompt + the assistant's self-model
+│   ├── prompt.txt          # the operating prompt (W5)
+│   └── self.py             # W3: identity, per-domain confidence, capabilities
 ├── prompts/                # personality prompt
 ├── config/
 │   ├── providers.json      # tier-2 provider configuration
@@ -358,11 +363,12 @@ Set `"discover": true` on a provider to auto-list models from `GET {base_url}/mo
 
 ```bash
 pip install -r requirements-dev.txt    # pytest, ruff and numpy only
-python -m pytest -q                    # 330 tests, no heavy imports
+python -m pytest -q                    # 366 tests, no heavy imports
 python -m ruff check .                 # lint (config in pyproject.toml)
 python -m compileall -q main.py agent  # syntax check
 python -m agent.audit verify           # confirm the audit log is untampered
 python -m agent.health                 # one-shot startup self-check
+python -m agent.health --full          # the above plus the mic and network probe
 python -m agent.health --serve         # read-only /health /ready /status /metrics
 python -m agent.crash list             # recent crash bundles (redacted)
 python -m memory.backup export         # zip the runtime state (no secrets)
@@ -371,8 +377,9 @@ python -m memory.backup export         # zip the runtime state (no secrets)
 The suite covers the cross-platform logic — the permission gate, sandbox, command
 classifier, rate limiter, circuit breakers, prompt-injection defense, structured
 logging, audit chain, atomic writes, egress control, voice roles, signed approvals,
-the degradation ladder, metrics/tracing, health checks, crash bundles, the SQLite
-memory store, backup/restore and the speaker-recognition helpers — and
+the degradation ladder, metrics/tracing, health checks, crash bundles, the serialized
+PortAudio door, the self-model, the SQLite memory store, backup/restore and the
+speaker-recognition helpers — and
 deliberately imports nothing Windows-only, so it runs unchanged on Linux. CI runs
 ruff and pytest on **Windows and Ubuntu** (`.github/workflows/ci.yml`).
 

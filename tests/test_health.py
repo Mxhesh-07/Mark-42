@@ -13,6 +13,26 @@ def test_checks_cover_the_subsystems(policy_file, monkeypatch):
     assert set(result) == {"policy", "config", "keys", "disk", "breaker", "memory"}
 
 
+def test_the_audio_probe_can_be_left_out_of_a_full_check(policy_file, monkeypatch):
+    """Regression: the startup thread must never touch PortAudio."""
+    monkeypatch.setattr(health, "check_model", lambda: {"ok": True, "detail": ""})
+    monkeypatch.setattr(health, "check_mic",
+                        lambda: pytest.fail("the mic must not be probed here"))
+
+    result = health.checks(full=True, audio=False)
+    assert "mic" not in result
+    assert "model" in result
+
+
+def test_the_audio_probe_is_included_when_asked(policy_file, monkeypatch):
+    monkeypatch.setattr(health, "check_model", lambda: {"ok": True, "detail": ""})
+    monkeypatch.setattr(health, "check_mic", lambda: {"ok": True, "detail": "mic"})
+
+    assert "mic" in health.checks(full=True, audio=True)
+    assert "mic" in health.checks(full=True)        # backwards compatible
+    assert "mic" not in health.checks()
+
+
 def test_policy_check_passes_with_a_valid_policy(policy_file):
     assert health.check_policy()["ok"] is True
 
@@ -89,6 +109,27 @@ def test_mic_check_skips_without_pyaudio(monkeypatch):
     assert result["ok"] is True and result.get("skipped") is True
 
 
+def test_mic_check_goes_through_the_serialized_opener(monkeypatch):
+    """agent.audio owns every PyAudio instance; check_mic must use it."""
+    from agent import audio
+
+    class _FakePa:
+        def get_device_count(self):
+            return 1
+
+        def get_default_input_device_info(self):
+            return {"name": "Fake Mic"}
+
+    opened, closed = [], []
+    monkeypatch.setattr(audio, "open_pyaudio", lambda: opened.append(1) or _FakePa())
+    monkeypatch.setattr(audio, "close", lambda instance: closed.append(instance))
+
+    result = health.check_mic()
+    assert result["ok"] is True
+    assert result["device"] == "Fake Mic"
+    assert opened and closed
+
+
 def test_self_check_has_a_stable_shape():
     outcome = health.self_check()
     assert set(outcome) >= {"ok", "failed", "checks", "took_ms"}
@@ -152,6 +193,28 @@ def test_routes_include_the_four_endpoints():
 def test_resolve_returns_404_for_an_unknown_path():
     code, _body, _ctype = health.resolve("/nope")
     assert code == 404
+
+
+def test_every_route_accepts_a_query_string():
+    """Regression: routes are called with the raw query, so they take an arg."""
+    for path in ("/", "/health", "/ready", "/status", "/metrics"):
+        code, _body, _ctype = health.resolve(path + "?x=1")
+        assert code in (200, 503)
+
+
+def test_a_trailing_slash_is_ignored():
+    code, _body, _ctype = health.resolve("/status/")
+    assert code == 200
+
+
+def test_the_health_route_probes_the_mic_only_when_asked(policy_file, monkeypatch):
+    monkeypatch.setattr(health, "check_mic", lambda: {"ok": True, "detail": "mic"})
+
+    _code, body, _ctype = health.resolve("/health")
+    assert "mic" not in json.loads(body)["checks"]
+
+    _code, body, _ctype = health.resolve("/health?full=1")
+    assert json.loads(body)["checks"]["mic"]["detail"] == "mic"
 
 
 def test_the_metrics_route_is_plain_text():

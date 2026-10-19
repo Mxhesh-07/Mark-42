@@ -12,3 +12,5 @@ Short records of the decisions that are expensive to reverse. Newest last.
 | [0006](0006-signed-approvals-egress-roles-and-subprocess-sandbox.md) | Approvals are signed, egress is checked, voices carry roles, code runs sandboxed |
 | [0007](0007-graceful-degradation-and-observability.md) | The assistant degrades gracefully and explains itself |
 | [0008](0008-transactional-memory-and-backup.md) | Memory is one transactional store, and the runtime state can be exported |
+| [0009](0009-one-door-for-portaudio.md) | PortAudio is created through one serialized door |
+| [0010](0010-operating-prompt-v2-and-self-model.md) | The prompt states initiative/opinion/self-report, and the assistant models itself |

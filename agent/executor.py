@@ -90,6 +90,17 @@ def _note_action(tool: str, started: float, ok: bool) -> None:
     except Exception:
         pass
 
+    # W3: feed the self-model, so its confidence reflects real outcomes. Tools
+    # that map to no domain record nothing.
+    try:
+        from core import self as self_model
+
+        domain = self_model.domain_for(tool)
+        if domain:
+            self_model.record_outcome(domain, ok)
+    except Exception:
+        pass
+
 def _run_generated_code(description: str, speak: Callable | None = None) -> str:
     import google.generativeai as genai
 

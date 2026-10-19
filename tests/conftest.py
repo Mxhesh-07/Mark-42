@@ -22,6 +22,7 @@ def _isolate(tmp_path, monkeypatch):
     rate-limit/breaker/role/metrics state between tests."""
     from agent import (approval, audit, breaker, crash, degrade, metrics, policy,
                        ratelimit, roles, trace)
+    from core import self as self_model
     from memory import sql_memory
 
     monkeypatch.setattr(policy, "KILL_FILE", tmp_path / "AUTONOMY_OFF")
@@ -29,6 +30,7 @@ def _isolate(tmp_path, monkeypatch):
     monkeypatch.setattr(approval, "KEY_PATH", tmp_path / "approval.key")
     monkeypatch.setattr(approval, "USED_PATH", tmp_path / "approval_used.json")
     monkeypatch.setattr(crash, "CRASH_DIR", tmp_path / "crashes")
+    monkeypatch.setattr(self_model, "STATE_PATH", tmp_path / "self.json")
     monkeypatch.setattr(sql_memory, "BASE_DIR", tmp_path)
     monkeypatch.setattr(sql_memory, "DB_PATH", tmp_path / "jarvis.db")
     audit._LAST_HASH = ""
@@ -40,6 +42,7 @@ def _isolate(tmp_path, monkeypatch):
     metrics.reset()
     trace.reset()
     degrade.reset()
+    self_model.reset_for_tests()
     yield
     audit._LAST_HASH = ""
     approval.reset_for_tests()
@@ -50,6 +53,7 @@ def _isolate(tmp_path, monkeypatch):
     metrics.reset()
     trace.reset()
     degrade.reset()
+    self_model.reset_for_tests()
 
 
 @pytest.fixture

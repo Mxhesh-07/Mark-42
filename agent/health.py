@@ -123,32 +123,41 @@ def check_memory() -> dict:
 
 
 def check_mic() -> dict:
-    """Optional: only meaningful when PyAudio and a device exist."""
+    """Optional: only meaningful when PyAudio and a device exist.
+
+    PortAudio creation is serialized through :mod:`agent.audio`, because a
+    concurrent ``PyAudio()`` can crash the process rather than raise.
+    """
     try:
-        import pyaudio
+        from agent import audio
     except Exception:
         return _ok("mic check skipped (PyAudio not installed)", skipped=True)
-    stream = None
-    audio = None
+    instance = None
     try:
-        audio = pyaudio.PyAudio()
-        if audio.get_device_count() < 1:
+        instance = audio.open_pyaudio()
+    except ImportError:
+        return _ok("mic check skipped (PyAudio not installed)", skipped=True)
+    except Exception as e:
+        return _bad(f"mic probe failed: {e}")
+    try:
+        if instance.get_device_count() < 1:
             return _bad("no input device")
-        default = audio.get_default_input_device_info()
+        default = instance.get_default_input_device_info()
         return _ok("input device present", device=default.get("name"))
     except Exception as e:
         return _bad(f"mic probe failed: {e}")
     finally:
-        try:
-            if stream is not None:
-                stream.close()
-        except Exception:
-            pass
-        try:
-            if audio is not None:
-                audio.terminate()
-        except Exception:
-            pass
+        audio.close(instance)
+
+
+def probe_audio() -> dict:
+    """The microphone probe on its own, for an explicit readiness check.
+
+    Deliberately *not* part of the startup self-check: it is the only check that
+    initialises a C library, so it is run on demand rather than from a
+    background thread during import.
+    """
+    return check_mic()
 
 
 def check_model() -> dict:
@@ -162,7 +171,16 @@ def check_model() -> dict:
         return _bad(f"model endpoint unreachable: {e}")
 
 
-def checks(full: bool = False) -> dict:
+def checks(full: bool = False, audio: bool | None = None) -> dict:
+    """Run the subsystem checks.
+
+    ``full``   also probe the network (a cheap connect; safe from a thread).
+    ``audio``  also probe the microphone. Defaults to ``full`` for backward
+               compatibility, but callers on a background thread must pass
+               ``audio=False``: this is the one check that initialises PortAudio.
+    """
+    if audio is None:
+        audio = full
     result = {
         "policy": check_policy(),
         "config": check_config(),
@@ -172,15 +190,16 @@ def checks(full: bool = False) -> dict:
         "memory": check_memory(),
     }
     if full:
-        result["mic"] = check_mic()
         result["model"] = check_model()
+    if audio:
+        result["mic"] = check_mic()
     return result
 
 
-def self_check(full: bool = False) -> dict:
+def self_check(full: bool = False, audio: bool | None = None) -> dict:
     """B4: run at startup, log the outcome, keep going regardless."""
     started = time.perf_counter()
-    result = checks(full=full)
+    result = checks(full=full, audio=audio)
     failed = {name: c["detail"] for name, c in result.items()
               if not c["ok"] and not c.get("skipped")}
     outcome = {
@@ -291,9 +310,8 @@ def _handler_factory(payload_fn):
             self.wfile.write(data)
 
         def do_GET(self) -> None:   # noqa: N802 - stdlib naming
-            path = self.path.split("?", 1)[0].rstrip("/") or "/"
             try:
-                code, body, ctype = payload_fn(path)
+                code, body, ctype = payload_fn(self.path)
             except Exception as e:
                 code, body, ctype = 500, json.dumps({"error": str(e)}), "application/json"
             self._send(code, body, ctype)
@@ -310,26 +328,26 @@ def routes() -> dict:
     def _json(code, obj):
         return code, json.dumps(obj, indent=2, default=str), "application/json"
 
-    def _health():
-        result = checks()
+    def _health(query: str = ""):
+        result = checks(audio="full" in query)
         failed = {k: v for k, v in result.items() if not v["ok"] and not v.get("skipped")}
         return _json(200 if not failed else 503, {"ok": not failed, "checks": result})
 
-    def _ready():
+    def _ready(_query: str = ""):
         result = ready()
         return _json(200 if result["ready"] else 503, result)
 
-    def _status():
+    def _status(_query: str = ""):
         return _json(200, status())
 
-    def _metrics():
+    def _metrics(_query: str = ""):
         from agent import metrics as metrics_mod
 
         return 200, metrics_mod.render(), "text/plain; version=0.0.4"
 
     return {
-        "/": (lambda: _json(200, {"service": "jarvis", "endpoints":
-                                  ["/health", "/ready", "/status", "/metrics"]})),
+        "/": (lambda _query="": _json(200, {"service": "jarvis", "endpoints":
+                                            ["/health", "/ready", "/status", "/metrics"]})),
         "/health": _health,
         "/ready": _ready,
         "/status": _status,
@@ -338,9 +356,11 @@ def routes() -> dict:
 
 
 def resolve(path: str):
+    route, _, query = str(path or "").partition("?")
+    route = route.rstrip("/") or "/"
     table = routes()
-    if path in table:
-        return table[path]()
+    if route in table:
+        return table[route](query)
     return 404, json.dumps({"error": "not found", "path": path}), "application/json"
 
 
@@ -373,7 +393,9 @@ def _cli(argv=None) -> int:
             server.shutdown()
         return 0
     full = "--full" in argv
-    print(json.dumps(self_check(full=full), indent=2, default=str))
+    # A one-shot CLI owns the process, so the audio probe is safe here.
+    outcome = self_check(full=full, audio="--no-audio" not in argv and full)
+    print(json.dumps(outcome, indent=2, default=str))
     return 0
 
 

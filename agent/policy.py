@@ -227,12 +227,27 @@ _MUTATING_ACTIONS = frozenset({
 })
 
 
-def _is_write(tool: str, params: dict) -> bool:
+def is_write(tool: str, params: dict) -> bool:
+    """Would this call change the world rather than observe it?
+
+    Used by the degradation ladder and the self-model as well as the gate, so it
+    is public.
+    """
     if tool in _WRITE_TOOLS:
         return True
     if tool == "file_controller":
         return str((params or {}).get("action") or "").strip().lower() in _MUTATING_ACTIONS
     return False
+
+
+def may_write(tool: str) -> bool:
+    """True when this tool can change the world for *some* argument.
+
+    ``is_write`` answers for one specific call; a capability report needs the
+    general answer, because it has no arguments to look at.
+    """
+    name = str(tool)
+    return name in _WRITE_TOOLS or name in _SANDBOX_TOOLS
 
 _ORDER = {Level.ALLOW: 0, Level.CONFIRM: 1, Level.BLOCK: 2}
 
@@ -327,7 +342,7 @@ def _guards(tool: str, params: dict, base: Decision) -> Decision:
     if current_mode == "MONITOR":
         return Decision(Level.BLOCK, "degraded to MONITOR: tools are stopped",
                         hard=True)
-    if current_mode == "READ_ONLY" and _is_write(tool, params):
+    if current_mode == "READ_ONLY" and is_write(tool, params):
         return Decision(Level.BLOCK, "degraded to READ_ONLY: writes are stopped",
                         hard=True)
 

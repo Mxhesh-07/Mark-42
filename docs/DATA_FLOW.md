@@ -47,6 +47,7 @@ Where data comes from, where it goes, and what is trusted at each hop.
 | Approval key | `memory/approval.key` | **yes** — gitignored, generated on first use |
 | Structured logs | `logs/jarvis.jsonl` | **yes** — gitignored |
 | Crash bundles | `memory/crashes/` | **yes** — gitignored, redacted on write |
+| Self-model (identity + per-domain confidence) | `memory/self.json` | **yes** — gitignored, written atomically |
 | Policy, provider list | `config/autonomy.json`, `config/providers.json` | no — tracked |
 
 ## Data leaving the machine

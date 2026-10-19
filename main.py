@@ -23,6 +23,10 @@ try:
 except Exception:
     pass
 
+# Every PyAudio instance goes through agent.audio so that construction is
+# serialized process-wide (a concurrent PyAudio() can crash Windows).
+from agent import audio
+
 # --- quota resilience ---------------------------------------------------------
 # Each model has its own free-tier daily bucket, and the project's old default
 # (gemini-2.5-flash-lite) is capped at ~20 requests/day — after that, memory
@@ -65,7 +69,13 @@ try:
 
     def _startup_self_check() -> None:
         try:
-            _health.self_check(full=True)
+            # `audio=False` is deliberate: the microphone probe is the only
+            # check that initialises PortAudio, and doing that on a background
+            # thread while the rest of the app is still importing its own
+            # PyAudio instance crashes the process with an access violation.
+            # The mic is probed on demand instead (/health?full=1, or
+            # `python -m agent.health --full`).
+            _health.self_check(full=True, audio=False)
         except Exception:
             pass
 
@@ -346,7 +356,7 @@ def _pick_input_device():
     pref = AUDIO_CONFIG.get("input_device")
 
     try:
-        pa = pyaudio.PyAudio()
+        pa = audio.open_pyaudio()
     except Exception:
         return None
 
@@ -426,7 +436,7 @@ def _pick_input_device():
         print("[JARVIS] ⚠️ No microphone produced any signal — using system default")
         return None
     finally:
-        pa.terminate()
+        audio.close(pa)
 
 
 def _device_name(index) -> str:
@@ -434,11 +444,11 @@ def _device_name(index) -> str:
     if index is None:
         return ""
     try:
-        pa = pyaudio.PyAudio()
+        pa = audio.open_pyaudio()
         try:
             return str(pa.get_device_info_by_index(index).get("name", ""))
         finally:
-            pa.terminate()
+            audio.close(pa)
     except Exception:
         return ""
 
@@ -492,7 +502,7 @@ CTX_TRIGGER_TOKENS = 100000
 CTX_TARGET_TOKENS  = 80000
 LIVE_TEMPERATURE   = 0.85
 
-pya = pyaudio.PyAudio()
+pya = audio.open_pyaudio()
 
 def _get_api_key() -> str:
     with open(API_CONFIG_PATH, "r", encoding="utf-8") as f:
@@ -1324,6 +1334,16 @@ class JarvisLive:
                 "instead of opening duplicates; call get_open_windows for a "
                 "fresh list]\n" + state_str + "\n\n" + sys_prompt
             )
+
+        # W3: the self-model. JARVIS reports its own mode, confidence and limits
+        # honestly instead of guessing what it can do.
+        try:
+            from core import self as _self_model
+            _self_block = _self_model.prompt_block()
+        except Exception:
+            _self_block = ""
+        if _self_block:
+            sys_prompt = _self_block + "\n\n" + sys_prompt
 
         # Automatic-VAD tuning (see VAD_* constants). Only raise the
         # end-of-turn silence window; prefix padding and longer windows were
