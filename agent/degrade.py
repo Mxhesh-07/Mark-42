@@ -18,6 +18,11 @@ The policy gate is what enforces READ_ONLY and MONITOR — this module only
 decides the mode and exposes the predicates. TEXT_ONLY is advisory: it reports
 that audio output should fall back to the HUD, but nothing here ever switches
 the microphone off on its own.
+
+Recovery is driven by consecutive successes, which is right for a flaky network
+and wrong for a spend cap: an hourly budget is lifted by the clock, not by three
+calls going well. `set_floor()` covers the second case — the ladder may still
+fall further, but it cannot climb above the floor until it is cleared.
 """
 
 from __future__ import annotations
@@ -38,11 +43,20 @@ _reason = "startup"
 _consecutive_failures = 0
 _consecutive_successes = 0
 _override: str | None = None
+# A floor is like an override that only works downwards: the ladder may fall
+# further but may never climb above it. It exists for limits whose clock is not
+# "a run of successes" — a spend cap is lifted by the hour, not by three calls
+# going well, so recovery-by-success must not be able to climb out of it.
+_floor: str | None = None
+_floor_reason: str | None = None
 
 
 def level() -> str:
     with _lock:
-        return _override or _level
+        current = _override or _level
+        if _floor is not None and _INDEX[_floor] > _INDEX[current]:
+            return _floor
+        return current
 
 
 def reason() -> str:
@@ -75,6 +89,44 @@ def set_override(name: str | None) -> str | None:
         return _override
 
 
+def set_floor(name: str, why: str = "floor") -> str:
+    """Hold the ladder at *or below* `name` until `clear_floor()`.
+
+    Unlike an override this is not absolute: a real failure may still drop the
+    system further down the ladder. Recovery, on the other hand, is clamped —
+    the ladder cannot climb above the floor, so a budget guard that set
+    READ_ONLY is not undone by three calls happening to succeed.
+
+    The floor is a *view* constraint: it does not move the underlying level, so
+    clearing it puts the ladder back exactly where it was.
+    """
+    global _floor, _floor_reason
+    name = str(name).upper()
+    if name not in _INDEX:
+        raise ValueError(f"unknown level {name!r}; expected one of {LEVELS}")
+    with _lock:
+        _floor, _floor_reason = name, str(why)
+        _reset_counters()
+        return _floor
+
+
+def clear_floor() -> str | None:
+    """Lift the floor. Recovery then resumes from wherever the ladder sits."""
+    global _floor, _floor_reason
+    with _lock:
+        previous = _floor
+        _floor, _floor_reason = None, None
+        return previous
+
+
+def floor() -> tuple[str, str] | None:
+    """The floor and why it was set, or None."""
+    with _lock:
+        if _floor is None:
+            return None
+        return (_floor, _floor_reason or "floor")
+
+
 def _reset_counters() -> None:
     global _consecutive_failures, _consecutive_successes
     _consecutive_failures = 0
@@ -85,17 +137,28 @@ def drop(why: str = "failure", steps: int = 1) -> str:
     """Step down the ladder."""
     global _level, _reason
     with _lock:
-        index = min(len(LEVELS) - 1, _INDEX[_level] + max(1, int(steps)))
+        current = _override or _level
+        if _floor is not None and _INDEX[_floor] > _INDEX[current]:
+            current = _floor
+        index = min(len(LEVELS) - 1, _INDEX[current] + max(1, int(steps)))
         _level, _reason = LEVELS[index], str(why)
         _reset_counters()
         return _level
 
 
 def recover(why: str = "recovered", steps: int = 1) -> str:
-    """Step back up the ladder."""
+    """Step back up the ladder, never above the floor."""
     global _level, _reason
     with _lock:
         index = max(0, _INDEX[_level] - max(1, int(steps)))
+        if _floor is not None:
+            index = max(index, _INDEX[_floor])
+        if index > _INDEX[_level]:
+            # The clamp would push the underlying level *down* to the floor.
+            # Leave it alone instead: the floor already does this via level(),
+            # and moving it would strand the ladder where the floor was once
+            # the floor is cleared.
+            return _floor
         _level, _reason = LEVELS[index], str(why)
         _reset_counters()
         return _level
@@ -122,10 +185,15 @@ def note_success() -> str:
         _consecutive_successes += 1
         _consecutive_failures = 0
         reached = _consecutive_successes >= RECOVER_AFTER
-        at_top = _level == LEVELS[0]
+        current = _override or _level
+        if _floor is not None and _INDEX[_floor] > _INDEX[current]:
+            current = _floor
+        at_top = _INDEX[current] == 0
     if reached and not at_top:
+        before = level()
         new = recover("successes")
-        _audit("recovered", "successes", new)
+        if new != before:
+            _audit("recovered", "successes", new)
         return new
     return level()
 
@@ -179,8 +247,12 @@ def describe() -> str:
 def status() -> dict:
     with _lock:
         current = _override or _level
+        if _floor is not None and _INDEX[_floor] > _INDEX[current]:
+            current = _floor
         reason = _reason
         override = _override
+        floor = _floor
+        floor_reason = _floor_reason
     # Capabilities are derived from `current` directly: calling the allows_*()
     # helpers here would re-acquire the lock we are not holding any more, which
     # is fine, but keeping the derivation pure avoids any chance of nesting.
@@ -189,6 +261,8 @@ def status() -> dict:
         "level": current,
         "reason": reason,
         "override": override,
+        "floor": floor,
+        "floor_reason": floor_reason,
         "ladder": list(LEVELS),
         "capabilities": {
             "audio": index < _INDEX["TEXT_ONLY"],
@@ -200,7 +274,8 @@ def status() -> dict:
 
 
 def reset() -> None:
-    global _level, _reason, _override
+    global _level, _reason, _override, _floor, _floor_reason
     with _lock:
         _level, _reason, _override = "FULL", "startup", None
+        _floor, _floor_reason = None, None
         _reset_counters()

@@ -20,3 +20,4 @@ Short records of the decisions that are expensive to reverse. Newest last.
 | [0014](0014-devices-reach-last.md) | Devices is reach, and reach is the last thing to add |
 | [0015](0015-tool-contract.md) | A tool is declared, dispatched and registered, or it is not a tool |
 | [0016](0016-redaction-two-levels.md) | Redaction has two levels, and outbound text gets the smaller one |
+| [0017](0017-budget-is-a-floor.md) | A spend cap is a floor on the degradation ladder, not a step down it |

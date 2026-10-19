@@ -207,6 +207,27 @@ def _record_success(model: str, requested: Optional[str]) -> None:
         _served[model] = _served.get(model, 0) + 1
     if requested and _norm(requested) != model:
         _log(f"served by fallback model {model!r}")
+    _note_usage(model)
+
+
+def _note_usage(served: str) -> None:
+    """I1: log one successful call against the budget ledger.
+
+    `served` is a bare model name for Gemini and ``"provider:model"`` for a
+    tier-2 provider (`_external_run`), so it is split here rather than at each
+    hop. Every successful call in the module funnels through `_record_success`,
+    which makes this the one place that has to be right.
+    """
+    try:
+        from agent import quota
+
+        if ":" in str(served):
+            provider, _, model = str(served).partition(":")
+        else:
+            provider, model = "gemini", str(served)
+        quota.record(provider or "gemini", model)
+    except Exception:
+        pass          # accounting must never break a working conversation
 
 
 # --------------------------------------------------------------------------

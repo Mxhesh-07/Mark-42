@@ -10,7 +10,8 @@ from agent import audit, health
 def test_checks_cover_the_subsystems(policy_file, monkeypatch):
     monkeypatch.setattr(health, "check_disk", lambda: {"ok": True, "detail": ""})
     result = health.checks()
-    assert set(result) == {"policy", "config", "keys", "disk", "breaker", "memory"}
+    assert set(result) == {"policy", "config", "keys", "disk", "breaker", "memory",
+                           "budget"}
 
 
 def test_the_audio_probe_can_be_left_out_of_a_full_check(policy_file, monkeypatch):

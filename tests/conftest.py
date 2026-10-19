@@ -21,8 +21,8 @@ def _isolate(tmp_path, monkeypatch):
     """Never touch real kill-switch, audit or approval state, and never leak
     rate-limit/breaker/role/metrics state between tests."""
     from agent import (approval, approval_rules, audit, breaker, crash, degrade,
-                       devices, initiative, judgement, metrics, policy, ratelimit,
-                       roles, trace)
+                       devices, initiative, judgement, metrics, policy, quota,
+                       ratelimit, roles, trace)
     from core import self as self_model
     from memory import sql_memory
 
@@ -36,6 +36,7 @@ def _isolate(tmp_path, monkeypatch):
     monkeypatch.setattr(judgement, "CONFIG_PATH", tmp_path / "judgement.json")
     monkeypatch.setattr(initiative, "POLICY_PATH", tmp_path / "autonomy.json")
     monkeypatch.setattr(self_model, "STATE_PATH", tmp_path / "self.json")
+    monkeypatch.setattr(quota, "LEDGER_PATH", tmp_path / "runtime" / "quota_ledger.json")
     monkeypatch.setattr(sql_memory, "BASE_DIR", tmp_path)
     monkeypatch.setattr(sql_memory, "DB_PATH", tmp_path / "jarvis.db")
     audit._LAST_HASH = ""
@@ -52,6 +53,7 @@ def _isolate(tmp_path, monkeypatch):
     judgement.reset_session()
     initiative.reset()
     self_model.reset_for_tests()
+    quota.reset_for_tests()
     yield
     audit._LAST_HASH = ""
     approval.reset_for_tests()
@@ -67,6 +69,7 @@ def _isolate(tmp_path, monkeypatch):
     judgement.reset_session()
     initiative.reset()
     self_model.reset_for_tests()
+    quota.reset_for_tests()
 
 
 class FakeClock:

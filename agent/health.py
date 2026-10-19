@@ -171,6 +171,25 @@ def check_model() -> dict:
         return _bad(f"model endpoint unreachable: {e}")
 
 
+def check_budget() -> dict:
+    """I1/I2: is the model-call budget still available?
+
+    Informational unless it has been exceeded, where it belongs in the startup
+    warning line — the conversation still works at READ_ONLY, but the user
+    should know why tools have stopped cooperating.
+    """
+    try:
+        from agent import quota
+    except Exception as e:                             # pragma: no cover
+        return _ok("quota module unavailable", error=str(e))
+    if not quota.config().get("enabled", True):
+        return _ok("budget guard off", skipped=True)
+    state = quota.usage()
+    if state["breached"]:
+        return _bad(f"over the {state['breached']} budget: {quota.describe()}")
+    return _ok(quota.describe())
+
+
 def checks(full: bool = False, audio: bool | None = None) -> dict:
     """Run the subsystem checks.
 
@@ -188,6 +207,7 @@ def checks(full: bool = False, audio: bool | None = None) -> dict:
         "disk": check_disk(),
         "breaker": check_breaker(),
         "memory": check_memory(),
+        "budget": check_budget(),
     }
     if full:
         result["model"] = check_model()
@@ -264,6 +284,15 @@ def status() -> dict:
         out["degradation"] = degrade.status()
     except Exception as e:
         out["degradation"] = {"error": str(e)}
+    try:
+        from agent import quota
+
+        # Read-only on purpose: report the spend, do not act on it. The guard
+        # runs on the model path, not because somebody asked for status.
+        out["quota"] = quota.usage()
+        out["quota"]["description"] = quota.describe()
+    except Exception as e:
+        out["quota"] = {"error": str(e)}
     try:
         from agent import metrics
 

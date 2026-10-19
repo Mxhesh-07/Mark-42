@@ -52,6 +52,7 @@ Where data comes from, where it goes, and what is trusted at each hop.
 | Policy, provider list | `config/autonomy.json`, `config/providers.json` | no - tracked |
 | Narrow "always allow" rules (W6) | `config/approval_rules.json` | **yes** - gitignored, one tool + action + resolved target per rule |
 | Device registry (W4) | `config/devices.json` | **yes** - gitignored, private addresses only |
+| Model-call ledger (I1) | `memory/quota_ledger.json` | no - gitignored, provider + model + timestamp per call, no prompts |
 
 ## Data leaving the machine
 
