@@ -7,19 +7,22 @@ tail, the version and the health snapshot, with secrets and personal data
 redacted on the way out.
 
 Nothing here ever keeps a raw key: ``redact()`` runs over every string that
-goes into the file, so a bundle is safe to attach to a bug report.
+goes into the file, so a bundle is safe to attach to a bug report. The redactor
+itself is `agent/redact.py`, which is also applied to text on its way out to a
+model; crash.py keeps this name because the capture path has always used it.
 """
 
 from __future__ import annotations
 
 import json
 import os
-import re
 import sys
 import time
 import traceback
 import uuid
 from pathlib import Path
+
+from agent.redact import redact      # the one redactor (see agent/redact.py)
 
 
 def get_base_dir() -> Path:
@@ -34,51 +37,6 @@ KEEP = 20   # bundles to retain
 
 MAX_TAIL_LINES = 200
 MAX_TEXT = 8000
-
-# --- redaction ----------------------------------------------------------------
-
-_KEY_PATTERNS = (
-    re.compile(r"\bAIza[0-9A-Za-z_\-]{20,}\b"),                 # Google API key
-    re.compile(r"\bsk-[A-Za-z0-9_\-]{16,}\b"),                  # OpenAI-style
-    re.compile(r"\bgh[pousr]_[A-Za-z0-9]{16,}\b"),              # GitHub tokens
-    re.compile(r"\bxox[baprs]-[A-Za-z0-9\-]{10,}\b"),           # Slack
-    re.compile(r"\beyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\b"),  # JWT
-    re.compile(r"(?i)\b(bearer)\s+[A-Za-z0-9._\-]{12,}"),
-    re.compile(r"(?i)\b(api[_\- ]?key|token|secret|password|passwd|pwd)\b\s*[:=]\s*"
-               r"[\"']?([^\s\"',}]{6,})[\"']?"),
-)
-_EMAIL = re.compile(r"\b[\w.+-]+@[\w-]+\.[\w.]+\b")
-_WINDOWS_USER = re.compile(r"(?i)\b[Cc]:\\Users\\[^\\\s\"']+")
-_POSIX_HOME = re.compile(r"/(?:home|Users)/[^/\s\"']+")
-_PHONE = re.compile(r"\b(?:\+?\d[\s-]?){10,}\b")
-
-
-def _redact_str(text: str) -> str:
-    out = text
-    for pattern in _KEY_PATTERNS:
-        if pattern.groups >= 2:
-            out = pattern.sub(lambda m: f"{m.group(1)}=<redacted>", out)
-        elif pattern.groups == 1:
-            out = pattern.sub(lambda m: f"{m.group(1)} <redacted>", out)
-        else:
-            out = pattern.sub("<redacted-key>", out)
-    out = _EMAIL.sub("<email>", out)
-    out = _WINDOWS_USER.sub(r"<home>", out)
-    out = _POSIX_HOME.sub("<home>", out)
-    out = _PHONE.sub("<number>", out)
-    return out
-
-
-def redact(value):
-    """Recursively redact a JSON-safe value."""
-    if isinstance(value, str):
-        return _redact_str(value)
-    if isinstance(value, dict):
-        return {redact(k): redact(v) for k, v in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [redact(v) for v in value]
-    return value
-
 
 # --- capture ------------------------------------------------------------------
 

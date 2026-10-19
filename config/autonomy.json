@@ -87,6 +87,10 @@
     "deny": [],
     "log_allowed": true
   },
+  "privacy": {
+    "log_redaction": "personal",
+    "egress_redaction": "secrets"
+  },
   "roles": {
     "enforce": true,
     "enforce_on_unknown": false,

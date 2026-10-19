@@ -116,6 +116,7 @@ Because Mark-42 can drive your machine, every tool call passes through one gate
 | **Initiative** | Proactivity with restraint (`agent/initiative.py`). Every trigger carries a **fixed** urgency - nothing at runtime can raise it, only the config can lower it - and a candidate is capped before it is ever spoken: quiet hours cap it to DIGEST, you talking (or focus mode, or a meeting) caps it to NOTIFY, and hourly interrupt/speak budgets cap it too. Per-trigger cooldowns stop repeats; the kill switch drops everything; the tick rides the task-queue loop, so there is no extra thread. |
 | **Confirmation modal** | A background `confirm` now appears on screen (`ui/confirm.py`) instead of failing closed in silence. Deny holds the focus, the window close button denies, and 30 s of no answer denies - nothing here can approve by accident, and with no display it denies too. "Always allow" writes a **narrow** rule (`agent/approval_rules.py`) bound to one tool, action and resolved target, never a tool-wide permission; it is not even offered when there is nothing narrow to bind to, it applies only to the owner, and it can never lift a block or the kill switch. |
 | **Device layer** | One `devices` tool over a gitignored registry (`agent/devices.py`). A device only has the capabilities it declares, and asking for the rest is refused rather than attempted. Two rules cannot be configured away: `sms`/`call` reach other people, so the gate raises them to at least `confirm` (never `allow`), and `shell` is always a hard block. A device address must be **private** - a public address is refused outright, because ADB has no authentication of its own; the only safe topology is a Tailscale/WireGuard mesh with nothing port-forwarded. Transports (adb/ssh/http/mqtt/serial) are lazy, and a transport failure is reported as a failure, never as success. |
+| **Redaction before egress** | One redactor, two levels (`agent/redact.py`). Text sent to **any** model - Gemini or a tier-2 provider - is stripped of credentials first: API keys, tokens, private-key blocks, bearer headers, URL-embedded passwords, and card-like numbers recognised by the **Luhn** check rather than by length, so an ordinary long number survives. Logs, crash bundles and audit entries additionally mask emails, phone numbers and the user name inside home paths. Outbound text deliberately does *not* mask emails or phone numbers, because those are usually the request itself - masking them would break the task it was meant to protect. Configurable in `config/autonomy.json` → `privacy`. |
 | **Observability** | Counters and gauges (`agent/metrics.py`), per-turn stage timings (`agent/trace.py`), and redacted crash bundles under `memory/crashes/` (`agent/crash.py`). |
 | **Tamper-evident audit log** | Every decision is appended to an append-only JSONL log, hash-chained so a later edit, reorder or deletion is detectable: `python -m agent.audit verify`. |
 | **Prompt-injection defense** | Text the assistant fetches (web search, pages, OCR, transcripts) is tagged as untrusted data before it reaches a model, and instruction-like spans are neutralised — including when fetched content is about to be written to a file. |
@@ -163,6 +164,7 @@ Mark-XXX-main/
 │   ├── approval_rules.py   # W6: narrow "always allow" rules (tool + action + target)
 │   ├── devices.py          # W4: device registry, capabilities, lazy transports
 │   ├── tool_contract.py    # G3/G4: declared vs dispatched vs registered; README table
+│   ├── redact.py           # H2: credentials out of outbound text, PII out of logs
 │   ├── degrade.py          # B2: FULL → TEXT_ONLY → READ_ONLY → MONITOR ladder
 │   ├── clock.py            # B7: UTC storage, local display, monotonic timers
 │   ├── metrics.py          # C2: counters/gauges + Prometheus text
@@ -397,8 +399,9 @@ See `setup_cloud.sh`.
 |------|:--------:|---------|
 | `config/api_keys.json` | ❌ gitignored | Gemini + tier-2 provider keys |
 | `config/providers.json` | ✅ | Tier-2 provider list, models, timeouts |
-| `config/autonomy.json` | ✅ | Permission levels, sandbox roots, rate limits, egress, roles |
+| `config/autonomy.json` | ✅ | Permission levels, sandbox roots, rate limits, egress, roles, redaction |
 | `config/judgement.json` | ✅ | Risk weights, pushback threshold, never-pushback tools |
+| `config/autonomy.json` → `privacy` | ✅ | Redaction levels: full for logs, credentials-only for outbound text |
 | `config/autonomy.json` → `initiative` | ✅ | Proactivity budgets, quiet hours, per-trigger urgency caps |
 | `config/approval_rules.json` | ❌ gitignored | Narrow "always allow" rules written by the W6 modal |
 | `config/devices.json` | ❌ gitignored | Device registry: transport, private address, declared capabilities |
@@ -419,7 +422,7 @@ Set `"discover": true` on a provider to auto-list models from `GET {base_url}/mo
 
 ```bash
 pip install -r requirements-dev.txt    # pytest, ruff and numpy only
-python -m pytest -q                    # 584 tests, no heavy imports
+python -m pytest -q                    # 623 tests, no heavy imports
 python -m ruff check .                 # lint (config in pyproject.toml)
 python -m compileall -q main.py agent  # syntax check
 python -m agent.audit verify           # confirm the audit log is untampered
@@ -433,6 +436,7 @@ python -m agent.approval_rules         # narrow "always allow" rules on file
 python -m ui.confirm                   # render the W6 panel as JSON (no display needed)
 python -m agent.devices                # registry, capability table, transport availability
 python -m agent.tool_contract --check  # tools declared == dispatched == registered
+python -m agent.redact "some text"     # what redaction would mask at each level
 python -m memory.backup export         # zip the runtime state (no secrets)
 ```
 

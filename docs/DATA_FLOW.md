@@ -31,6 +31,7 @@ Where data comes from, where it goes, and what is trusted at each hop.
 | Tool → filesystem | `file_controller` | gated | path sandbox, deny by default (ADR 0002/0004) |
 | Tool → shell | `cmd_control` | gated | command classification, destructive commands refused (ADR 0004) |
 | Tool → network | destination tools | gated | egress allow/deny, private addresses refused (ADR 0006) |
+| Assistant → model provider | `gemini_util` request path | **redacted** | credentials and card numbers stripped before the request is built; emails survive because they are usually the request (ADR 0016) |
 | Tool → generated code | `generated_code` | untrusted | run in a restricted-env subprocess, secrets stripped (ADR 0006) |
 | Confirmations | the user | trusted | bound to the effect and signed; single-use (ADR 0006) |
 | Policy | `config/autonomy.json` | trusted | local file, not writable by the model |
@@ -58,3 +59,10 @@ Text and audio are sent to the configured AI provider (Google Gemini by default,
 optional tier-2 providers in `config/providers.json`) because that is where inference
 happens. Everything else — memories, voiceprints, the audit log, credentials — stays
 local. Nothing is uploaded to any other service, and there is no telemetry.
+
+Outbound text passes through `agent/redact.py` first (`egress_redaction`, `secrets` by
+default): API keys, tokens, private-key blocks, bearer headers, URL-embedded passwords
+and Luhn-valid card numbers are masked before the request is built. Email addresses and
+phone numbers are deliberately **not** masked outbound — they are usually the request
+itself ("email Sam about Thursday") — but they are masked in logs and crash bundles,
+along with home paths. The level is configurable in `config/autonomy.json` → `privacy`.

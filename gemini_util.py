@@ -622,6 +622,7 @@ def generate(contents: Any, *, models: Optional[Sequence[str]] = None,
     client = get_client()
     chain = tuple(models) if models else None
     requested = chain[0] if chain else None
+    contents = _clean(contents)
     return _run(
         lambda m: client.models.generate_content(model=m, contents=contents, config=config),
         requested,
@@ -677,6 +678,22 @@ def reset() -> None:
 # --------------------------------------------------------------------------
 # SDK patches — makes every existing call site quota-resilient
 # --------------------------------------------------------------------------
+def _clean(contents: Any) -> Any:
+    """H2: strip credentials from a request's text before it leaves the process.
+
+    Applied in every SDK wrapper, so no call site — session, vision, hologram,
+    the startup model test — has to remember. Only strings and the built-in
+    containers are walked; SDK objects pass through untouched, and masking is
+    idempotent, so the sync and async paths cannot double-apply it.
+    """
+    try:
+        from agent import redact
+
+        return redact.outbound(contents)
+    except Exception:
+        return contents
+
+
 def _patch_new_sdk() -> bool:
     try:
         from google.genai import models as genai_models
@@ -690,6 +707,7 @@ def _patch_new_sdk() -> bool:
         original = cls.generate_content
 
         def generate_content(self, *, model=None, contents=None, config=None, **kwargs):
+            contents = _clean(contents)
             return _run(
                 lambda m: original(self, model=m, contents=contents, config=config, **kwargs),
                 model,
@@ -706,6 +724,7 @@ def _patch_new_sdk() -> bool:
         aoriginal = acls.generate_content
 
         async def agenerate_content(self, *, model=None, contents=None, config=None, **kwargs):
+            contents = _clean(contents)
             return await _arun(
                 lambda m: aoriginal(self, model=m, contents=contents, config=config, **kwargs),
                 model,
@@ -747,6 +766,7 @@ def _patch_old_sdk() -> bool:
 
     def generate_content(self, contents, *args, **kwargs):
         requested = getattr(self, "_model_name", None)
+        contents = _clean(contents)
 
         # Recover the parts of the request the old SDK keeps on the instance,
         # so tier-2 can be told whether this is a plain-text prompt.
