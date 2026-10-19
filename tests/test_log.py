@@ -141,6 +141,17 @@ def test_console_prefixes_warnings(capsys, logging_state):
     assert capsys.readouterr().out.strip() == "Warning: careful"
 
 
+def test_console_does_not_double_a_level_prefix(capsys, logging_state):
+    # Some libraries log "Warning: ..." themselves; the handler must not add a
+    # second prefix.
+    log.configure(json_path=None, console=True)
+    log.get_logger("t").warning("Warning: there are non-data parts in the response")
+
+    assert capsys.readouterr().out.strip() == (
+        "Warning: there are non-data parts in the response"
+    )
+
+
 def test_console_output_for_an_error_is_prefixed(capsys, logging_state):
     log.configure(json_path=None, console=True)
     log.get_logger("t").error("broke")

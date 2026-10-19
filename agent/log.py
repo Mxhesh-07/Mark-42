@@ -71,12 +71,19 @@ class _TurnFilter(logging.Filter):
 
 
 class _ConsoleFormatter(logging.Formatter):
-    """Exactly the message - the console output must not change."""
+    """Exactly the message - the console output must not change.
+
+    A warning or worse gets a level prefix, unless the message already starts
+    with it (some libraries log "Warning: ..." themselves, and "Warning:
+    Warning: ..." is just noise).
+    """
 
     def format(self, record: logging.LogRecord) -> str:
         text = record.getMessage()
         if record.levelno >= logging.WARNING:
-            return f"{record.levelname.title()}: {text}"
+            prefix = f"{record.levelname.title()}: "
+            if not text.startswith(prefix):
+                return prefix + text
         return text
 
 
