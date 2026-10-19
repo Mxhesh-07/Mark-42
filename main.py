@@ -630,6 +630,30 @@ TOOL_DECLARATIONS = [
         ),
         "parameters": {"type": "OBJECT", "properties": {}}
     },
+    {
+        "name": "devices",
+        "description": (
+            "Talks to your other devices (phone, laptop, tablet...) registered in "
+            "config/devices.json. action=list shows what is registered, "
+            "action=status asks a device how it is, and action=run performs one "
+            "capability (cmd) on a target. A capability the device does not "
+            "declare is refused. Reaching other people (sms, call) always needs "
+            "your confirmation, and the shell capability is always blocked. If it "
+            "reports a failure, say so — never claim success."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "action": {"type": "STRING", "description": "list | status | run"},
+                "target": {"type": "STRING", "description": "Device name from the registry"},
+                "cmd":    {"type": "STRING", "description": "Capability: info, notify, screenshot, ring, media, sms, call, lock, exec, wol"},
+                "text":   {"type": "STRING", "description": "Message text, for notify/sms"},
+                "number": {"type": "STRING", "description": "Phone number, for sms/call"},
+                "command": {"type": "STRING", "description": "Command, for exec"}
+            },
+            "required": ["action"]
+        }
+    },
 {
     "name": "web_search",
     "description": "Searches the web for any information.",
@@ -1458,6 +1482,23 @@ class JarvisLive:
             elif name == "get_open_windows":
                 r = await loop.run_in_executor(None, lambda: _describe_state())
                 result = r or "No notable windows or apps are currently open."
+
+            elif name == "devices":
+                # W4: one tool over the device registry. The permission gate has
+                # already run above; a result with ok=False is reported as a
+                # failure so the model never turns it into a claim of success.
+                from agent import devices as _devices
+
+                def _call_devices(_args=args):
+                    payload = dict(_args)
+                    action = str(payload.pop("action", "list") or "list")
+                    target = str(payload.pop("target", "") or "")
+                    cmd = str(payload.pop("cmd", "") or "")
+                    return _devices.render(
+                        _devices.dispatch(action, target=target, cmd=cmd, **payload)
+                    )
+
+                result = await loop.run_in_executor(None, _call_devices)
 
             elif name == "weather_report":
                 r = await loop.run_in_executor(

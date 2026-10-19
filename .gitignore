@@ -64,5 +64,6 @@ memory/crashes/
 memory/self.json
 memory/metrics.json
 config/approval_rules.json
+config/devices.json
 memory/quota_ledger.json
 recordings/

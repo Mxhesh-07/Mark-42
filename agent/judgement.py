@@ -117,6 +117,12 @@ _ALTERNATIVES = {
         "I can lock the screen instead, if you are stepping away.",
     ("browser_control", None):
         "I can read the page and tell you what is there instead of acting on it.",
+    ("devices", "sms"):
+        "I can show you the exact message and number before anything sends.",
+    ("devices", "call"):
+        "I can put the number on screen and let you dial it.",
+    ("devices", "exec"):
+        "I can show you the command and its output here first.",
 }
 
 _lock = threading.RLock()
@@ -211,6 +217,16 @@ def classify(tool: str, params: dict | None = None) -> tuple[str, str]:
 
     if tool == "computer_settings" and action in _POWER_ACTIONS:
         return "recoverable", "self"
+
+    if tool == "devices":
+        # W4: the capability, not the tool, decides how far this reaches.
+        try:
+            from agent import devices
+
+            capability = params.get("cmd") or params.get("capability") or action
+            return devices.reversibility(capability), devices.blast_radius(capability)
+        except Exception:
+            return "recoverable", "network"
 
     return _TOOL_PROFILE.get(tool, ("recoverable", "network"))
 

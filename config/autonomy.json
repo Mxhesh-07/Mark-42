@@ -24,7 +24,8 @@
     "cmd_control": "confirm",
     "code_helper": "confirm",
     "dev_agent": "confirm",
-    "generated_code": "confirm"
+    "generated_code": "confirm",
+    "devices": "confirm"
   },
   "actions": {
     "file_controller": {
@@ -42,6 +43,21 @@
       "shutdown": "block",
       "restart": "block",
       "lock": "confirm"
+    },
+    "devices": {
+      "list": "allow",
+      "info": "allow",
+      "status": "allow",
+      "notify": "allow",
+      "screenshot": "allow",
+      "ring": "allow",
+      "media": "confirm",
+      "lock": "confirm",
+      "wol": "confirm",
+      "exec": "confirm",
+      "sms": "confirm",
+      "call": "confirm",
+      "shell": "block"
     }
   },
   "sandbox": {

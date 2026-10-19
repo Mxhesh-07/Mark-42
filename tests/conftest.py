@@ -21,13 +21,14 @@ def _isolate(tmp_path, monkeypatch):
     """Never touch real kill-switch, audit or approval state, and never leak
     rate-limit/breaker/role/metrics state between tests."""
     from agent import (approval, approval_rules, audit, breaker, crash, degrade,
-                       initiative, judgement, metrics, policy, ratelimit, roles,
-                       trace)
+                       devices, initiative, judgement, metrics, policy, ratelimit,
+                       roles, trace)
     from core import self as self_model
     from memory import sql_memory
 
     monkeypatch.setattr(policy, "KILL_FILE", tmp_path / "AUTONOMY_OFF")
     monkeypatch.setattr(approval_rules, "RULES_PATH", tmp_path / "approval_rules.json")
+    monkeypatch.setattr(devices, "CONFIG_PATH", tmp_path / "devices.json")
     monkeypatch.setattr(audit, "LOG_PATH", tmp_path / "audit_log.jsonl")
     monkeypatch.setattr(approval, "KEY_PATH", tmp_path / "approval.key")
     monkeypatch.setattr(approval, "USED_PATH", tmp_path / "approval_used.json")
@@ -40,6 +41,7 @@ def _isolate(tmp_path, monkeypatch):
     audit._LAST_HASH = ""
     approval.reset_for_tests()
     approval_rules.reset_for_tests()
+    devices.reset_for_tests()
     policy._killed.clear()
     roles.clear()
     ratelimit.reset()
@@ -54,6 +56,7 @@ def _isolate(tmp_path, monkeypatch):
     audit._LAST_HASH = ""
     approval.reset_for_tests()
     approval_rules.reset_for_tests()
+    devices.reset_for_tests()
     policy._killed.clear()
     roles.clear()
     ratelimit.reset()

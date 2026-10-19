@@ -1,0 +1,18 @@
+{
+  "_comment": "Copy to devices.json (gitignored) and edit. Addresses MUST be private: a Tailscale/WireGuard mesh address or a LAN address. Never port-forward ADB (5555) or expose any device to the internet — the layer refuses a public address outright.",
+  "enabled": true,
+  "devices": {
+    "phone": {
+      "transport": "adb",
+      "address": "100.64.0.1:5555",
+      "capabilities": ["info", "status", "notify", "screenshot", "ring", "media", "sms", "call"],
+      "policy_key": "phone"
+    },
+    "laptop": {
+      "transport": "ssh",
+      "address": "laptop.tailnet.ts.net",
+      "capabilities": ["status", "exec", "wol"],
+      "policy_key": "laptop"
+    }
+  }
+}

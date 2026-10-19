@@ -267,6 +267,12 @@ def evaluate(tool: str, parameters: dict | None = None) -> Decision:
     tool   = str(tool or "")
     params = parameters or {}
     action = str(params.get("action") or "").strip().lower()
+    if tool == "devices":
+        # W4 spells the per-device capability "cmd" and wraps it in an action of
+        # list/status/run, but the policy table is keyed by the capability itself
+        # (notify, ring, sms, ...), so normalise it here rather than in callers.
+        capability = str(params.get("cmd") or params.get("capability") or "").strip().lower()
+        action = capability or action or "list"
 
     action_map = (pol.get("actions") or {}).get(tool) or {}
     if action and action in action_map:
@@ -373,6 +379,20 @@ def _guards(tool: str, params: dict, base: Decision) -> Decision:
         ok, why = egress.guard(tool, params)
         if not ok:
             return Decision(Level.BLOCK, f"egress blocked: {why}", hard=True)
+
+    # W4 - two device rules cannot be configured away, so they are enforced here
+    # rather than trusted to the table: a capability that reaches other people can
+    # never be silent, and the shell capability can never be enabled.
+    if tool == "devices" and base.level is not Level.BLOCK:
+        from agent import devices
+        capability = devices.canonical(params.get("cmd") or params.get("capability"))
+        if capability in devices.ALWAYS_BLOCKED:
+            return Decision(Level.BLOCK,
+                            f"the {capability!r} device capability is always blocked",
+                            hard=True)
+        if capability in devices.OTHER_PEOPLE and base.level is Level.ALLOW:
+            base = Decision(Level.CONFIRM,
+                            f"{capability!r} reaches other people: it can never be silent")
 
     # A9 - per-tool rate limits, enforced centrally so no caller can skip them.
     from agent import ratelimit
