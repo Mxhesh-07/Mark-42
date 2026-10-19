@@ -20,8 +20,8 @@ if str(ROOT) not in sys.path:
 def _isolate(tmp_path, monkeypatch):
     """Never touch real kill-switch, audit or approval state, and never leak
     rate-limit/breaker/role/metrics state between tests."""
-    from agent import (approval, audit, breaker, crash, degrade, metrics, policy,
-                       ratelimit, roles, trace)
+    from agent import (approval, audit, breaker, crash, degrade, judgement, metrics,
+                       policy, ratelimit, roles, trace)
     from core import self as self_model
     from memory import sql_memory
 
@@ -30,6 +30,7 @@ def _isolate(tmp_path, monkeypatch):
     monkeypatch.setattr(approval, "KEY_PATH", tmp_path / "approval.key")
     monkeypatch.setattr(approval, "USED_PATH", tmp_path / "approval_used.json")
     monkeypatch.setattr(crash, "CRASH_DIR", tmp_path / "crashes")
+    monkeypatch.setattr(judgement, "CONFIG_PATH", tmp_path / "judgement.json")
     monkeypatch.setattr(self_model, "STATE_PATH", tmp_path / "self.json")
     monkeypatch.setattr(sql_memory, "BASE_DIR", tmp_path)
     monkeypatch.setattr(sql_memory, "DB_PATH", tmp_path / "jarvis.db")
@@ -42,6 +43,7 @@ def _isolate(tmp_path, monkeypatch):
     metrics.reset()
     trace.reset()
     degrade.reset()
+    judgement.reset_session()
     self_model.reset_for_tests()
     yield
     audit._LAST_HASH = ""
@@ -53,6 +55,7 @@ def _isolate(tmp_path, monkeypatch):
     metrics.reset()
     trace.reset()
     degrade.reset()
+    judgement.reset_session()
     self_model.reset_for_tests()
 
 
@@ -82,3 +85,14 @@ def write_policy(policy_file):
         policy._cache_mtime = -1.0
 
     return _write
+
+
+@pytest.fixture
+def judgement_file(tmp_path, monkeypatch):
+    """Point agent.judgement at a throwaway judgement.json."""
+    from agent import judgement
+
+    path = tmp_path / "judgement.json"
+    path.write_text(json.dumps(judgement.DEFAULT_CONFIG), encoding="utf-8")
+    monkeypatch.setattr(judgement, "CONFIG_PATH", path)
+    yield path

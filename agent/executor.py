@@ -391,19 +391,24 @@ class AgentExecutor:
     # ------------------------------------------------------------ approvals
 
     def _request_approval(self, tool: str, params: dict, reason: str,
-                          tainted: bool) -> bool:
+                          tainted: bool, opinion: str | None = None) -> bool:
         """Ask the user, then bind their answer to THIS effect (A1/A5).
 
         The user is shown the effect, not the tool name — "delete
         C:\\x\\y.txt (2.1 MB)", not "file_controller" — and a yes becomes a
         single-use token tied to a hash of the tool and its full arguments. A
         refusal, an expiry, a tampered token or a replay authorises nothing.
+
+        ``opinion`` (W2) is the one-sentence concern from ``judgement.assess``,
+        folded in so the user sees it while deciding.
         """
         self._approval_error = ""
         man = approval.manifest(tool, params, task_id=self.task_id)
         effect = f"{man['effect']}  ({reason})"
         if tainted:
             effect += "  [arguments include text fetched from an untrusted source]"
+        if opinion:
+            effect += f"  — {opinion}"
         print(f"[Executor] 🔏 Approval needed: {effect}")
         _think("sys", f"approval needed: {effect}")
 
@@ -455,10 +460,25 @@ class AgentExecutor:
                                          goal=self._goal)
 
         gate = policy.evaluate(tool, params)
+
+        # W2: form an opinion about the call before acting on it. The decision we
+        # already have is passed in, so this never spends a second rate-limit
+        # token on the same call.
+        advice = None
+        judgement_mod = None
+        try:
+            from agent import judgement as judgement_mod
+
+            advice = judgement_mod.assess(tool, params, decision=gate)
+        except Exception:
+            advice = None
+
         if gate.level is not Level.ALLOW:
             approved = False
             if gate.level is Level.CONFIRM:
-                approved = self._request_approval(tool, params, gate.reason, tainted)
+                opinion = advice.opinion if advice and advice.should_pushback else None
+                approved = self._request_approval(tool, params, gate.reason, tainted,
+                                                  opinion=opinion)
             if not approved:
                 outcome = "blocked" if gate.level is Level.BLOCK else "denied"
                 detail = gate.reason
@@ -471,6 +491,16 @@ class AgentExecutor:
                              detail=detail, task_id=self.task_id, goal=self._goal)
                 _note_action(tool, started, False)
                 return False, f"DENIED ({outcome}): {detail}"
+
+        # W2: an allowed but unwise call is said once, then carried out. The
+        # user's choice stands; the opinion is not repeated and not re-argued.
+        if advice is not None and advice.should_pushback and gate.level is Level.ALLOW:
+            audit.record("judgement", tool=tool, parameters=params, level="allow",
+                         outcome="pushback", detail=advice.opinion,
+                         task_id=self.task_id, goal=self._goal)
+            _think("warn", f"{advice.opinion}  [{judgement_mod.explain(advice)}]")
+            if speak:
+                speak(advice.opinion)
 
         self._seq += 1
         step_num = self._seq

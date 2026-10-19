@@ -1,0 +1,14 @@
+{
+  "enabled": true,
+  "weights": {
+    "irreversibility": 0.45,
+    "blast_radius": 0.35,
+    "confidence": 0.2
+  },
+  "pushback_threshold": 0.6,
+  "pushback_on_allow": true,
+  "never_pushback_tools": [
+    "weather_report",
+    "reminder"
+  ]
+}

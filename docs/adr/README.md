@@ -14,3 +14,4 @@ Short records of the decisions that are expensive to reverse. Newest last.
 | [0008](0008-transactional-memory-and-backup.md) | Memory is one transactional store, and the runtime state can be exported |
 | [0009](0009-one-door-for-portaudio.md) | PortAudio is created through one serialized door |
 | [0010](0010-operating-prompt-v2-and-self-model.md) | The prompt states initiative/opinion/self-report, and the assistant models itself |
+| [0011](0011-risk-scoring-and-pushback.md) | Risk is scored and a concern is raised at most once per effect |

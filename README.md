@@ -112,6 +112,7 @@ Because Mark-42 can drive your machine, every tool call passes through one gate
 | **Startup self-check** | At boot the assistant verifies policy, keys, disk headroom, breakers and memory, then reports what is broken instead of failing mysteriously later. The microphone probe is *not* part of it (`/health?full=1` or `python -m agent.health --full` runs it on demand), because it is the one check that initialises PortAudio and must never race the audio subsystem. |
 | **Health endpoint** | A read-only, loopback-only HTTP surface (`python -m agent.health --serve`, or `JARVIS_HEALTH_PORT=8799`) exposes `/health`, `/ready`, `/status` and `/metrics`. |
 | **Self-model** | A stable identity plus a per-domain confidence average fed by real outcomes (`core/self.py`). It is injected into the prompt so the assistant can name a blocked capability, its policy and a weak domain instead of guessing - and it is written once, so a restart does not rewrite who it is. |
+| **Judgement** | Beyond the binary gate, each call is scored for risk (`agent/judgement.py`): `0.45 x how-undoable + 0.35 x whom-it-affects + 0.20 x (1 - confidence)`. Above the threshold, and only when a concrete safer alternative exists, one sentence is said - once per effect per session. It is folded into the confirmation prompt, never repeated, and never argued. |
 | **Observability** | Counters and gauges (`agent/metrics.py`), per-turn stage timings (`agent/trace.py`), and redacted crash bundles under `memory/crashes/` (`agent/crash.py`). |
 | **Tamper-evident audit log** | Every decision is appended to an append-only JSONL log, hash-chained so a later edit, reorder or deletion is detectable: `python -m agent.audit verify`. |
 | **Prompt-injection defense** | Text the assistant fetches (web search, pages, OCR, transcripts) is tagged as untrusted data before it reaches a model, and instruction-like spans are neutralised — including when fetched content is about to be written to a file. |
@@ -154,6 +155,7 @@ Mark-XXX-main/
 │   ├── approval.py         # A1: signed, single-use approvals bound to an effect
 │   ├── subprocess_sandbox.py # A11: restricted-env subprocess for generated code
 │   ├── breaker.py          # B1: circuit breakers for external providers
+│   ├── judgement.py        # W2: risk score + at-most-one opinion per effect
 │   ├── degrade.py          # B2: FULL → TEXT_ONLY → READ_ONLY → MONITOR ladder
 │   ├── clock.py            # B7: UTC storage, local display, monotonic timers
 │   ├── metrics.py          # C2: counters/gauges + Prometheus text
@@ -347,6 +349,7 @@ See `setup_cloud.sh`.
 | `config/api_keys.json` | ❌ gitignored | Gemini + tier-2 provider keys |
 | `config/providers.json` | ✅ | Tier-2 provider list, models, timeouts |
 | `config/autonomy.json` | ✅ | Permission levels, sandbox roots, rate limits, egress, roles |
+| `config/judgement.json` | ✅ | Risk weights, pushback threshold, never-pushback tools |
 | `config/email_config.json` | ❌ gitignored | IMAP/SMTP credentials |
 | `config/alert_config.json` | ❌ gitignored | Alert phone number, enable flag |
 | `config/spotify_config.json` | ❌ gitignored | Spotify client id/secret |
@@ -363,7 +366,7 @@ Set `"discover": true` on a provider to auto-list models from `GET {base_url}/mo
 
 ```bash
 pip install -r requirements-dev.txt    # pytest, ruff and numpy only
-python -m pytest -q                    # 366 tests, no heavy imports
+python -m pytest -q                    # 394 tests, no heavy imports
 python -m ruff check .                 # lint (config in pyproject.toml)
 python -m compileall -q main.py agent  # syntax check
 python -m agent.audit verify           # confirm the audit log is untampered
@@ -378,7 +381,8 @@ The suite covers the cross-platform logic — the permission gate, sandbox, comm
 classifier, rate limiter, circuit breakers, prompt-injection defense, structured
 logging, audit chain, atomic writes, egress control, voice roles, signed approvals,
 the degradation ladder, metrics/tracing, health checks, crash bundles, the serialized
-PortAudio door, the self-model, the SQLite memory store, backup/restore and the
+PortAudio door, the self-model, the risk/opinion scorer, the SQLite memory store,
+backup/restore and the
 speaker-recognition helpers — and
 deliberately imports nothing Windows-only, so it runs unchanged on Linux. CI runs
 ruff and pytest on **Windows and Ubuntu** (`.github/workflows/ci.yml`).
