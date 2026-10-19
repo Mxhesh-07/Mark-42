@@ -9,6 +9,7 @@ cannot be verified after the fact.
 Storage: memory/audit_log.jsonl (gitignored runtime data).
 """
 
+import hashlib
 import json
 import sys
 import threading
@@ -29,6 +30,39 @@ MAX_BYTES  = 5 * 1024 * 1024   # trim once the log grows past ~5 MB
 KEEP_LINES = 2000              # ...keeping the most recent entries
 
 _lock = threading.Lock()
+_LAST_HASH = ""     # chain head; loaded from disk on first use
+
+
+def _canonical(entry: dict) -> str:
+    """Deterministic JSON of an entry, excluding its own hash."""
+    body = {k: v for k, v in entry.items() if k != "hash"}
+    return json.dumps(body, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+
+
+def _chain(entry: dict, prev: str) -> str:
+    return hashlib.sha256((prev + _canonical(entry)).encode("utf-8")).hexdigest()
+
+
+def _load_last_hash() -> str:
+    """The hash of the newest entry already on disk ("" when there is none)."""
+    global _LAST_HASH
+    if _LAST_HASH:
+        return _LAST_HASH
+    try:
+        lines = LOG_PATH.read_text(encoding="utf-8", errors="replace").splitlines()
+    except Exception:
+        return ""
+    for line in reversed(lines):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            entry = json.loads(line)
+        except Exception:
+            continue
+        _LAST_HASH = str(entry.get("hash") or "")
+        break
+    return _LAST_HASH
 
 
 def _trim_if_needed() -> None:
@@ -83,11 +117,16 @@ def record(
     if detail:
         entry["detail"] = str(detail)[:1000]
 
+    global _LAST_HASH
     try:
         with _lock:
+            prev = _load_last_hash()
+            entry["prev"] = prev
+            entry["hash"] = _chain(entry, prev)
             LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
             with open(LOG_PATH, "a", encoding="utf-8") as f:
                 f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+            _LAST_HASH = entry["hash"]
             _trim_if_needed()
     except Exception as e:
         print(f"[Audit] ⚠️ Could not write audit entry: {e}")
@@ -121,9 +160,72 @@ def path() -> str:
 
 def clear() -> None:
     """Wipe the log (maintenance/testing only)."""
+    global _LAST_HASH
     with _lock:
         try:
             LOG_PATH.write_text("", encoding="utf-8")
         except Exception:
             pass
+        _LAST_HASH = ""
     print("[Audit] 🧹 Audit log cleared")
+
+
+def verify() -> tuple[bool, str]:
+    """Recompute the hash chain and report the first problem, if any.
+
+    Each entry stores ``prev`` (the previous entry's hash) and its own ``hash``,
+    so any later edit, reorder or deletion shows up as a broken chain. The first
+    entry of the file is the chain start and is not checked against a
+    predecessor - that also covers logs trimmed to their most recent lines.
+    """
+    try:
+        lines = LOG_PATH.read_text(encoding="utf-8", errors="replace").splitlines()
+    except FileNotFoundError:
+        return True, "no audit log yet"
+    except Exception as e:
+        return False, f"could not read the log: {e}"
+
+    prev: str | None = None
+    checked = 0
+    legacy = 0
+    for num, line in enumerate(lines, 1):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            entry = json.loads(line)
+        except Exception:
+            return False, f"line {num} is not valid JSON"
+        if not isinstance(entry, dict) or "hash" not in entry:
+            legacy += 1
+            continue
+        if prev is not None and entry.get("prev") != prev:
+            return False, f"line {num}: chain break (prev does not match the previous entry)"
+        if _chain(entry, entry.get("prev") or "") != entry["hash"]:
+            return False, f"line {num}: contents changed after the entry was written"
+        prev = entry["hash"]
+        checked += 1
+
+    msg = f"{checked} entries verified"
+    if legacy:
+        msg += f" ({legacy} pre-chain entries skipped)"
+    return True, msg
+
+
+def _cli(argv: list[str]) -> int:
+    cmd = (argv[0] if argv else "verify").lower()
+    if cmd == "verify":
+        ok, msg = verify()
+        print(("✅ audit chain intact: " if ok else "❌ audit chain BROKEN: ") + msg)
+        return 0 if ok else 1
+    if cmd == "tail":
+        n = int(argv[1]) if len(argv) > 1 and argv[1].isdigit() else 20
+        for e in tail(n):
+            print(f"  {e.get('time', '')}  {e.get('event', '')}  {e.get('tool', '') or ''}")
+        return 0
+    print("usage: python -m agent.audit [verify|tail [n]]")
+    return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(_cli(sys.argv[1:]))

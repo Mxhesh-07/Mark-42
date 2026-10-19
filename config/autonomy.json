@@ -43,5 +43,14 @@
       "restart": "block",
       "lock": "confirm"
     }
+  },
+  "sandbox": {
+    "enabled": true,
+    "roots": ["~"]
+  },
+  "rate_limits": {
+    "default": { "per_minute": 30, "burst": 12 },
+    "global": { "per_minute": 120, "burst": 40 },
+    "tools": {}
   }
 }

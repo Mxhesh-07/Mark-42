@@ -106,6 +106,18 @@ DEFAULT_POLICY: dict = {
             "lock":     "confirm",
         },
     },
+    # A2: filesystem sandbox. Roots are resolved (symlinks and "..") before a
+    # path is compared; "~" expands to the user's home directory.
+    "sandbox": {
+        "enabled": True,
+        "roots": ["~"],
+    },
+    # A9: per-tool token buckets, enforced inside evaluate().
+    "rate_limits": {
+        "default": {"per_minute": 30, "burst": 12},
+        "global":  {"per_minute": 120, "burst": 40},
+        "tools":   {},
+    },
 }
 
 _lock         = threading.Lock()
@@ -163,6 +175,16 @@ def _level(value, fallback: Level = Level.CONFIRM) -> Level:
         return fallback
 
 
+# Tools whose parameters carry filesystem paths that must stay inside the roots.
+_SANDBOX_TOOLS = frozenset({"file_controller"})
+
+_ORDER = {Level.ALLOW: 0, Level.CONFIRM: 1, Level.BLOCK: 2}
+
+
+def _strictest(a: Decision, b: Decision) -> Decision:
+    return a if _ORDER.get(a.level, 1) >= _ORDER.get(b.level, 1) else b
+
+
 # --- the gate -----------------------------------------------------------------
 
 def evaluate(tool: str, parameters: dict | None = None) -> Decision:
@@ -178,15 +200,50 @@ def evaluate(tool: str, parameters: dict | None = None) -> Decision:
     action_map = (pol.get("actions") or {}).get(tool) or {}
     if action and action in action_map:
         lvl = _level(action_map[action])
-        return Decision(lvl, f"{tool}.{action} is '{lvl.value}' by policy")
+        base = Decision(lvl, f"{tool}.{action} is '{lvl.value}' by policy")
+    elif tool in (pol.get("tools") or {}):
+        lvl = _level(pol["tools"][tool])
+        base = Decision(lvl, f"{tool} is '{lvl.value}' by policy")
+    else:
+        lvl = _level(pol.get("default_level", "confirm"))
+        base = Decision(lvl, f"{tool} not listed → default '{lvl.value}'")
 
-    tools = pol.get("tools") or {}
-    if tool in tools:
-        lvl = _level(tools[tool])
-        return Decision(lvl, f"{tool} is '{lvl.value}' by policy")
+    return _guards(tool, params, base)
 
-    lvl = _level(pol.get("default_level", "confirm"))
-    return Decision(lvl, f"{tool} not listed → default '{lvl.value}'")
+
+def _guards(tool: str, params: dict, base: Decision) -> Decision:
+    """Apply the extra guards, so every caller inherits them (A2/A3/A9)."""
+    # Kill switch - enforced here so even a caller that forgets to check it stops.
+    if kill_requested():
+        return Decision(Level.BLOCK, "kill switch engaged")
+
+    # A2 - filesystem sandbox: deny outright; this never reaches the model.
+    if tool in _SANDBOX_TOOLS:
+        from agent import sandbox
+        for path in sandbox.paths_in(params):
+            ok, why = sandbox.check(path)
+            if not ok:
+                return Decision(Level.BLOCK, f"path sandbox blocked {path!r}: {why}")
+
+    # A3 - shell command analysis: read-only runs, destructive is refused.
+    if tool == "cmd_control" and base.level is not Level.BLOCK:
+        from agent import command_policy
+        cmd = str(params.get("command") or params.get("cmd") or "")
+        category, why = command_policy.classify(cmd)
+        if category == command_policy.CATEGORY_BLOCK:
+            return Decision(Level.BLOCK, f"shell command blocked: {why}")
+        if category == command_policy.CATEGORY_ALLOW:
+            base = Decision(Level.ALLOW, f"shell command allowed: {why}")
+        else:
+            base = Decision(Level.CONFIRM, f"shell command needs confirmation: {why}")
+
+    # A9 - per-tool rate limits, enforced centrally so no caller can skip them.
+    from agent import ratelimit
+    allowed, why = ratelimit.check(tool)
+    if not allowed:
+        return Decision(Level.BLOCK, why)
+
+    return base
 
 
 # --- kill switch --------------------------------------------------------------
