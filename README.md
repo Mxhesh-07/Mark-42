@@ -118,6 +118,7 @@ Because Mark-42 can drive your machine, every tool call passes through one gate
 | **Device layer** | One `devices` tool over a gitignored registry (`agent/devices.py`). A device only has the capabilities it declares, and asking for the rest is refused rather than attempted. Two rules cannot be configured away: `sms`/`call` reach other people, so the gate raises them to at least `confirm` (never `allow`), and `shell` is always a hard block. A device address must be **private** - a public address is refused outright, because ADB has no authentication of its own; the only safe topology is a Tailscale/WireGuard mesh with nothing port-forwarded. Transports (adb/ssh/http/mqtt/serial) are lazy, and a transport failure is reported as a failure, never as success. |
 | **Redaction before egress** | One redactor, two levels (`agent/redact.py`). Text sent to **any** model - Gemini or a tier-2 provider - is stripped of credentials first: API keys, tokens, private-key blocks, bearer headers, URL-embedded passwords, and card-like numbers recognised by the **Luhn** check rather than by length, so an ordinary long number survives. Logs, crash bundles and audit entries additionally mask emails, phone numbers and the user name inside home paths. Outbound text deliberately does *not* mask emails or phone numbers, because those are usually the request itself - masking them would break the task it was meant to protect. Configurable in `config/autonomy.json` → `privacy`. |
 | **Budget guard** | Every successful model call is counted in `memory/quota_ledger.json` (`agent/quota.py`), tagged with the provider and model. Over the rolling-hour or local-day cap the ladder is **floored** at READ_ONLY, so the existing gate rule stops every write while the conversation keeps working - a runaway loop is broken at its source. It is a floor and not a step down because the ladder's recovery rule is "three successes", and a runaway loop supplies those. Successful calls only: a 429 that walks six models costs nothing. Announced once per window (console, audit, metric, `[Health]`), and released by the clock, not by success. Defaults 60/hour, 400/day; `0` means unlimited. |
+| **Subject controls** | One command over every store that holds something about you (`agent/forget.py`): memories, profile, AIMemory, procedures, task queue, self-model, spend ledger, voiceprint, shared history, notifications, crash bundles and the audit log. The **dry run and the receipt agree** — the count `inventory()` promises is the count `forget_all()` removes, tested per store. Emptying is not deleting: JSON stores keep their valid shape. The audit log is cleared **last** and then written to, so the first entry of the new log records the deletion (when, and how many entries). Credentials and the approval key are deliberately kept, and the report names them so the boundary is visible. Voiceprints are opt-out via `include_voiceprints`. Reachable as the `forget` tool at `confirm`, dry-run by default. |
 | **Observability** | Counters and gauges (`agent/metrics.py`), per-turn stage timings (`agent/trace.py`), and redacted crash bundles under `memory/crashes/` (`agent/crash.py`). |
 | **Tamper-evident audit log** | Every decision is appended to an append-only JSONL log, hash-chained so a later edit, reorder or deletion is detectable: `python -m agent.audit verify`. |
 | **Prompt-injection defense** | Text the assistant fetches (web search, pages, OCR, transcripts) is tagged as untrusted data before it reaches a model, and instruction-like spans are neutralised — including when fetched content is about to be written to a file. |
@@ -167,6 +168,7 @@ Mark-XXX-main/
 │   ├── tool_contract.py    # G3/G4: declared vs dispatched vs registered; README table
 │   ├── redact.py           # H2: credentials out of outbound text, PII out of logs
 │   ├── quota.py            # I1/I2: call ledger + budget guard (floors the ladder)
+│   ├── forget.py           # H4: subject controls — inventory, export, forget
 │   ├── degrade.py          # B2: FULL → TEXT_ONLY → READ_ONLY → MONITOR ladder
 │   ├── clock.py            # B7: UTC storage, local display, monotonic timers
 │   ├── metrics.py          # C2: counters/gauges + Prometheus text
@@ -247,6 +249,7 @@ by hand. `python -m agent.tool_contract --write` rewrites it, and CI
 | `enterprise` | confirm | Enterprise tools: task automation, email drafting, news monitoring, stock/crypto tracking, client CRM. |
 | `file_controller` | confirm | Manages files and folders. |
 | `flight_finder` | allow | Searches for flights on Google Flights and speaks the best options. |
+| `forget` | confirm | The user's own data, under their own control. |
 | `get_open_windows` | allow | Lists the windows and apps currently open on the computer. |
 | `hologram` | confirm | Holographic 3D projector. |
 | `life` | confirm | Personal life management: habits & streaks, focus/Pomodoro sessions, knowledge base (notes & links), meeting… |
@@ -425,7 +428,7 @@ Set `"discover": true` on a provider to auto-list models from `GET {base_url}/mo
 
 ```bash
 pip install -r requirements-dev.txt    # pytest, ruff and numpy only
-python -m pytest -q                    # 669 tests, no heavy imports
+python -m pytest -q                    # 697 tests, no heavy imports
 python -m ruff check .                 # lint (config in pyproject.toml)
 python -m compileall -q main.py agent  # syntax check
 python -m agent.audit verify           # confirm the audit log is untampered
@@ -441,6 +444,7 @@ python -m agent.devices                # registry, capability table, transport a
 python -m agent.tool_contract --check  # tools declared == dispatched == registered
 python -m agent.redact "some text"     # what redaction would mask at each level
 python -m agent.quota                  # model-call ledger + the budget caps
+python -m agent.forget                 # what is stored about you; --yes to erase it
 python -m memory.backup export         # zip the runtime state (no secrets)
 ```
 

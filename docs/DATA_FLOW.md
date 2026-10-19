@@ -54,6 +54,15 @@ Where data comes from, where it goes, and what is trusted at each hop.
 | Device registry (W4) | `config/devices.json` | **yes** - gitignored, private addresses only |
 | Model-call ledger (I1) | `memory/quota_ledger.json` | no - gitignored, provider + model + timestamp per call, no prompts |
 
+**Subject controls (H4).** Everything in the table above except `config/*.json` and
+`memory/approval.key` is under one control: `python -m agent.forget` reports what is
+held, `--yes` erases it, and `export` writes a zip. The report is the receipt — the
+count it shows is the count the erase removes, per store. Credentials and the
+approval signing key are kept on purpose (deleting them breaks the assistant rather
+than forgetting a person) and are named in the report so the line is visible. The
+audit log is cleared last and then written to, so the deletion is itself the first
+entry of the new log.
+
 ## Data leaving the machine
 
 Text and audio are sent to the configured AI provider (Google Gemini by default, plus the

@@ -21,3 +21,4 @@ Short records of the decisions that are expensive to reverse. Newest last.
 | [0015](0015-tool-contract.md) | A tool is declared, dispatched and registered, or it is not a tool |
 | [0016](0016-redaction-two-levels.md) | Redaction has two levels, and outbound text gets the smaller one |
 | [0017](0017-budget-is-a-floor.md) | A spend cap is a floor on the degradation ladder, not a step down it |
+| [0018](0018-subject-controls.md) | "Forget everything about me" means every store, and the receipt proves it |

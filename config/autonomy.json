@@ -16,6 +16,7 @@
     "open_app": "allow",
     "browser_control": "allow",
     "get_open_windows": "allow",
+    "forget": "confirm",
     "file_controller": "confirm",
     "computer_settings": "confirm",
     "computer_control": "confirm",

@@ -219,6 +219,7 @@ _EGRESS_TOOLS = frozenset({
 _WRITE_TOOLS = frozenset({
     "send_message", "cmd_control", "generated_code", "dev_agent",
     "code_helper", "computer_control", "desktop_control", "computer_settings",
+    "forget",
 })
 
 _MUTATING_ACTIONS = frozenset({

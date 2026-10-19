@@ -620,6 +620,49 @@ TOOL_DECLARATIONS = [
         }
     },
     {
+        "name": "forget",
+        "description": (
+            "The user's own data, under their own control. Use action='report' "
+            "to list what is stored about the user and where. Use action='export' "
+            "to write a zip of it. Use action='forget' ONLY when the user "
+            "explicitly asks to be forgotten, to have everything erased, or to "
+            "delete their data — it is irreversible, and it removes memories, "
+            "the profile, the spend ledger, the voiceprint, crash bundles and "
+            "(unless include_audit is false) the audit log. Never call "
+            "action='forget' because the user is frustrated or because it might "
+            "help: ask first."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "action": {
+                    "type": "STRING",
+                    "description": "report (default), export, or forget",
+                    "enum": ["report", "export", "forget"],
+                },
+                "path": {
+                    "type": "STRING",
+                    "description": "Where to write the export zip (export only)",
+                },
+                "include_audit": {
+                    "type": "BOOLEAN",
+                    "description": (
+                        "forget only: also wipe the audit log. Defaults to true; "
+                        "false keeps the record of the deletion."
+                    ),
+                },
+                "include_voiceprints": {
+                    "type": "BOOLEAN",
+                    "description": (
+                        "forget only: also delete the voiceprint. Defaults to "
+                        "true."
+                    ),
+                },
+            },
+            "required": ["action"],
+        },
+    },
+    {
         "name": "get_open_windows",
         "description": (
             "Lists the windows and apps currently open on the computer. Call "
@@ -1482,6 +1525,32 @@ class JarvisLive:
             elif name == "get_open_windows":
                 r = await loop.run_in_executor(None, lambda: _describe_state())
                 result = r or "No notable windows or apps are currently open."
+
+            elif name == "forget":
+                # H4: the user's own data, by their own request. Destructive and
+                # irreversible, so policy puts it at `confirm` and the approval
+                # modal shows the exact effect before it runs. The dry run is the
+                # default action so a bare call reports rather than deletes.
+                from agent import forget as _forget
+
+                def _call_forget(_args=args):
+                    payload = dict(_args)
+                    action = str(payload.pop("action", "report") or "report")
+                    if action == "report":
+                        return json.dumps(_forget.inventory(), ensure_ascii=False)
+                    if action == "export":
+                        where = payload.get("path") or None
+                        return json.dumps(_forget.export(where), ensure_ascii=False)
+                    if action == "forget":
+                        include_audit = bool(payload.get("include_audit", True))
+                        include_voice = bool(payload.get("include_voiceprints", True))
+                        done = _forget.forget_all(include_audit=include_audit,
+                                                  include_voiceprints=include_voice)
+                        return (f"Forgot {done['total_removed']} records. "
+                                f"{json.dumps(done['remaining'], ensure_ascii=False)}")
+                    return f"Unknown forget action: {action}"
+
+                result = await loop.run_in_executor(None, _call_forget)
 
             elif name == "devices":
                 # W4: one tool over the device registry. The permission gate has
