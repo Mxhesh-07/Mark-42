@@ -16,3 +16,4 @@ Short records of the decisions that are expensive to reverse. Newest last.
 | [0010](0010-operating-prompt-v2-and-self-model.md) | The prompt states initiative/opinion/self-report, and the assistant models itself |
 | [0011](0011-risk-scoring-and-pushback.md) | Risk is scored and a concern is raised at most once per effect |
 | [0012](0012-proactivity-with-fixed-urgency.md) | Proactivity is capped by fixed urgency, budgets and quiet hours |
+| [0013](0013-confirmation-modal-and-narrow-rules.md) | A confirmation is answered in the UI, and "always allow" is narrow |

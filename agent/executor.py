@@ -391,7 +391,7 @@ class AgentExecutor:
     # ------------------------------------------------------------ approvals
 
     def _request_approval(self, tool: str, params: dict, reason: str,
-                          tainted: bool, opinion: str | None = None) -> bool:
+                          tainted: bool, assessment=None) -> bool:
         """Ask the user, then bind their answer to THIS effect (A1/A5).
 
         The user is shown the effect, not the tool name — "delete
@@ -399,10 +399,15 @@ class AgentExecutor:
         single-use token tied to a hash of the tool and its full arguments. A
         refusal, an expiry, a tampered token or a replay authorises nothing.
 
-        ``opinion`` (W2) is the one-sentence concern from ``judgement.assess``,
-        folded in so the user sees it while deciding.
+        ``assessment`` (W2) carries the one-sentence concern and the risk score,
+        which are folded in so the user decides with the same information the
+        assistant had — and handed to the approver so the W6 modal can show it.
         """
         self._approval_error = ""
+        opinion = None
+        if assessment is not None and getattr(assessment, "should_pushback", False):
+            opinion = getattr(assessment, "opinion", None)
+
         man = approval.manifest(tool, params, task_id=self.task_id)
         effect = f"{man['effect']}  ({reason})"
         if tainted:
@@ -415,7 +420,15 @@ class AgentExecutor:
         granted = False
         if self.approver is not None:
             try:
-                granted = bool(self.approver(tool, params, effect))
+                # W6 approvers take the assessment so the modal can show the same
+                # risk the executor computed; older ones take three arguments.
+                granted = bool(self.approver(tool, params, effect, assessment=assessment))
+            except TypeError:
+                try:
+                    granted = bool(self.approver(tool, params, effect))
+                except Exception as e:
+                    print(f"[Executor] ⚠️ approver error: {e}")
+                    granted = False
             except Exception as e:
                 print(f"[Executor] ⚠️ approver error: {e}")
                 granted = False
@@ -476,9 +489,8 @@ class AgentExecutor:
         if gate.level is not Level.ALLOW:
             approved = False
             if gate.level is Level.CONFIRM:
-                opinion = advice.opinion if advice and advice.should_pushback else None
                 approved = self._request_approval(tool, params, gate.reason, tainted,
-                                                  opinion=opinion)
+                                                  assessment=advice)
             if not approved:
                 outcome = "blocked" if gate.level is Level.BLOCK else "denied"
                 detail = gate.reason

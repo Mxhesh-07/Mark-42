@@ -385,6 +385,20 @@ def _guards(tool: str, params: dict, base: Decision) -> Decision:
     from agent import roles
     base = roles.cap(tool, params, base)
 
+    # W6 - a narrow, user-authored approval rule turns this exact CONFIRM into an
+    # ALLOW. Three things keep that from being a hole: it runs *after* every hard
+    # guard above (a rule can never lift a kill switch, a sandbox escape or a
+    # refused command), it only applies to the owner, and the rule itself is
+    # bound to one tool + action + resolved target.
+    if base.level is Level.CONFIRM and roles.current() == roles.OWNER:
+        try:
+            from agent import approval_rules
+
+            if approval_rules.matches(tool, params) is not None:
+                base = Decision(Level.ALLOW, "approved once by a saved narrow rule")
+        except Exception:
+            pass
+
     return base
 
 

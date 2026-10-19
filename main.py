@@ -2585,9 +2585,16 @@ def main():
         # loop has to be running for a proactive nudge to ever fire. Starting it
         # is idempotent.
         try:
-            get_queue()
-        except Exception:
-            pass
+            _queue = get_queue()
+            # W6: a background `confirm` now appears as a modal that shows the
+            # exact effect, the risk and the opinion, answered on the Tk thread
+            # instead of failing closed with nothing on screen. Deny holds the
+            # focus and it denies itself after 30 s.
+            from ui import confirm as _confirm
+
+            _queue.set_approver(_confirm.ui_approver(getattr(ui, "root", None)))
+        except Exception as _approver_err:
+            print(f"[JARVIS] confirmation modal off: {_approver_err}")
 
         jarvis = JarvisLive(ui)
         try:

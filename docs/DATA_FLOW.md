@@ -48,7 +48,8 @@ Where data comes from, where it goes, and what is trusted at each hop.
 | Structured logs | `logs/jarvis.jsonl` | **yes** — gitignored |
 | Crash bundles | `memory/crashes/` | **yes** — gitignored, redacted on write |
 | Self-model (identity + per-domain confidence) | `memory/self.json` | **yes** — gitignored, written atomically |
-| Policy, provider list | `config/autonomy.json`, `config/providers.json` | no — tracked |
+| Policy, provider list | `config/autonomy.json`, `config/providers.json` | no - tracked |
+| Narrow "always allow" rules (W6) | `config/approval_rules.json` | **yes** - gitignored, one tool + action + resolved target per rule |
 
 ## Data leaving the machine
 

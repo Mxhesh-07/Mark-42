@@ -12,7 +12,9 @@ from memory.memory_manager import load_memory
 def get_base_dir():
     if getattr(sys, "frozen", False):
         return Path(sys.executable).parent
-    return Path(__file__).resolve().parent
+    # ui/ is a package now (so ui.confirm can live beside the window code), which
+    # puts this file one level below the project root.
+    return Path(__file__).resolve().parent.parent
 
 
 BASE_DIR   = get_base_dir()

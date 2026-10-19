@@ -114,6 +114,7 @@ Because Mark-42 can drive your machine, every tool call passes through one gate
 | **Self-model** | A stable identity plus a per-domain confidence average fed by real outcomes (`core/self.py`). It is injected into the prompt so the assistant can name a blocked capability, its policy and a weak domain instead of guessing - and it is written once, so a restart does not rewrite who it is. |
 | **Judgement** | Beyond the binary gate, each call is scored for risk (`agent/judgement.py`): `0.45 x how-undoable + 0.35 x whom-it-affects + 0.20 x (1 - confidence)`. Above the threshold, and only when a concrete safer alternative exists, one sentence is said - once per effect per session. It is folded into the confirmation prompt, never repeated, and never argued. |
 | **Initiative** | Proactivity with restraint (`agent/initiative.py`). Every trigger carries a **fixed** urgency - nothing at runtime can raise it, only the config can lower it - and a candidate is capped before it is ever spoken: quiet hours cap it to DIGEST, you talking (or focus mode, or a meeting) caps it to NOTIFY, and hourly interrupt/speak budgets cap it too. Per-trigger cooldowns stop repeats; the kill switch drops everything; the tick rides the task-queue loop, so there is no extra thread. |
+| **Confirmation modal** | A background `confirm` now appears on screen (`ui/confirm.py`) instead of failing closed in silence. Deny holds the focus, the window close button denies, and 30 s of no answer denies - nothing here can approve by accident, and with no display it denies too. "Always allow" writes a **narrow** rule (`agent/approval_rules.py`) bound to one tool, action and resolved target, never a tool-wide permission; it is not even offered when there is nothing narrow to bind to, it applies only to the owner, and it can never lift a block or the kill switch. |
 | **Observability** | Counters and gauges (`agent/metrics.py`), per-turn stage timings (`agent/trace.py`), and redacted crash bundles under `memory/crashes/` (`agent/crash.py`). |
 | **Tamper-evident audit log** | Every decision is appended to an append-only JSONL log, hash-chained so a later edit, reorder or deletion is detectable: `python -m agent.audit verify`. |
 | **Prompt-injection defense** | Text the assistant fetches (web search, pages, OCR, transcripts) is tagged as untrusted data before it reaches a model, and instruction-like spans are neutralised — including when fetched content is about to be written to a file. |
@@ -129,7 +130,7 @@ read-only to the model — the assistant cannot widen its own permissions.
 ```
 Mark-XXX-main/
 ├── main.py                 # entry point: wires UI, voice, memory, all tools
-├── ui.py                   # native Tk UI (log + THINKING panes, input, live transcript)
+├── ui/                     # native Tk UI: __init__.py (log + THINKING panes), confirm.py (W6 modal)
 ├── gemini_util.py          # quota-resilient model fallback + tier-2 providers
 ├── system_state.py         # desktop/window awareness
 ├── voice_id.py             # speaker identification (resemblyzer backend)
@@ -353,6 +354,7 @@ See `setup_cloud.sh`.
 | `config/autonomy.json` | ✅ | Permission levels, sandbox roots, rate limits, egress, roles |
 | `config/judgement.json` | ✅ | Risk weights, pushback threshold, never-pushback tools |
 | `config/autonomy.json` → `initiative` | ✅ | Proactivity budgets, quiet hours, per-trigger urgency caps |
+| `config/approval_rules.json` | ❌ gitignored | Narrow "always allow" rules written by the W6 modal |
 | `config/email_config.json` | ❌ gitignored | IMAP/SMTP credentials |
 | `config/alert_config.json` | ❌ gitignored | Alert phone number, enable flag |
 | `config/spotify_config.json` | ❌ gitignored | Spotify client id/secret |
@@ -369,7 +371,7 @@ Set `"discover": true` on a provider to auto-list models from `GET {base_url}/mo
 
 ```bash
 pip install -r requirements-dev.txt    # pytest, ruff and numpy only
-python -m pytest -q                    # 465 tests, no heavy imports
+python -m pytest -q                    # 507 tests, no heavy imports
 python -m ruff check .                 # lint (config in pyproject.toml)
 python -m compileall -q main.py agent  # syntax check
 python -m agent.audit verify           # confirm the audit log is untampered
@@ -379,6 +381,8 @@ python -m agent.health --serve         # read-only /health /ready /status /metri
 python -m agent.crash list             # recent crash bundles (redacted)
 python -m agent.initiative             # triggers + proactivity budget
 python -m agent.initiative tick        # run one initiative tick now
+python -m agent.approval_rules         # narrow "always allow" rules on file
+python -m ui.confirm                   # render the W6 panel as JSON (no display needed)
 python -m memory.backup export         # zip the runtime state (no secrets)
 ```
 
@@ -387,7 +391,7 @@ classifier, rate limiter, circuit breakers, prompt-injection defense, structured
 logging, audit chain, atomic writes, egress control, voice roles, signed approvals,
 the degradation ladder, metrics/tracing, health checks, crash bundles, the serialized
 PortAudio door, the self-model, the risk/opinion scorer, the initiative engine, the
-SQLite memory store, backup/restore and the
+SQLite memory store, backup/restore, the confirmation modal and the
 speaker-recognition helpers — and
 deliberately imports nothing Windows-only, so it runs unchanged on Linux. CI runs
 ruff and pytest on **Windows and Ubuntu** (`.github/workflows/ci.yml`).
