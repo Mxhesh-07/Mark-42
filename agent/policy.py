@@ -46,14 +46,24 @@ class Level(Enum):
 
 
 class Decision:
-    __slots__ = ("level", "reason")
+    """A gate decision.
 
-    def __init__(self, level: Level, reason: str):
+    ``hard`` marks a safety invariant (kill switch, sandbox escape, refused
+    command, denied egress, non-owner speaker) that can never be approved away.
+    A soft decision comes from the policy table and expresses *autonomy* — what
+    the assistant may do unattended — which an attended request may satisfy.
+    """
+
+    __slots__ = ("level", "reason", "hard")
+
+    def __init__(self, level: Level, reason: str, hard: bool = False):
         self.level  = level
         self.reason = reason
+        self.hard   = bool(hard)
 
     def __repr__(self) -> str:
-        return f"Decision({self.level.value}, {self.reason!r})"
+        tag = " [hard]" if self.hard else ""
+        return f"Decision({self.level.value}, {self.reason!r}{tag})"
 
 
 # Default policy — conservative. Anything not listed falls back to `confirm`.
@@ -118,6 +128,25 @@ DEFAULT_POLICY: dict = {
         "global":  {"per_minute": 120, "burst": 40},
         "tools":   {},
     },
+    # A4: network egress control. Private/loopback destinations are refused by
+    # default; add hosts to "allow" to reach them deliberately.
+    "egress": {
+        "enabled": True,
+        "block_private": True,
+        "allow": [],
+        "deny": [],
+        "log_allowed": True,
+    },
+    # A8: speaker authorisation. Enrollment is authorisation, so a recognised
+    # voice is the owner unless the config maps it elsewhere. Set
+    # enforce_on_unknown to true once your own voice is enrolled.
+    "roles": {
+        "enforce": True,
+        "enforce_on_unknown": False,
+        "default": "owner",
+        "map": {"owner": [], "guest": []},
+        "extra_tools": {"guest": [], "unknown": []},
+    },
 }
 
 _lock         = threading.Lock()
@@ -178,6 +207,12 @@ def _level(value, fallback: Level = Level.CONFIRM) -> Level:
 # Tools whose parameters carry filesystem paths that must stay inside the roots.
 _SANDBOX_TOOLS = frozenset({"file_controller"})
 
+# Tools that can name a network destination (A4).
+_EGRESS_TOOLS = frozenset({
+    "browser_control", "web_search", "send_message", "flight_finder",
+    "youtube_video", "dev_agent", "code_helper", "generated_code",
+})
+
 _ORDER = {Level.ALLOW: 0, Level.CONFIRM: 1, Level.BLOCK: 2}
 
 
@@ -211,11 +246,36 @@ def evaluate(tool: str, parameters: dict | None = None) -> Decision:
     return _guards(tool, params, base)
 
 
+def evaluate_live(tool: str, parameters: dict | None = None) -> Decision:
+    """Gate an *attended* call — the user is present and asked for it.
+
+    The background agent is unattended, so a `confirm` there must be answered by
+    an approver or it fails closed. In the live voice path there is no separate
+    approval channel, and the spoken request *is* the authorisation, so a soft
+    ``confirm`` — and a soft ``block`` from the policy *table* — is satisfied by
+    attendance.
+
+    Nothing that is a safety invariant is relaxed. A ``hard`` block — the kill
+    switch, a refused shell command, a sandbox escape, a denied network
+    destination, a rate-limit guard, or a non-owner speaker (A8 downgrades
+    those to a hard block, never to ``confirm``) — is still refused, because it
+    can never be approved away.
+    """
+    decision = evaluate(tool, parameters)
+    if not decision.hard and decision.level in (Level.CONFIRM, Level.BLOCK):
+        return Decision(Level.ALLOW, f"{decision.reason} (attended request)")
+    return decision
+
+
 def _guards(tool: str, params: dict, base: Decision) -> Decision:
-    """Apply the extra guards, so every caller inherits them (A2/A3/A9)."""
+    """Apply the extra guards, so every caller inherits them (A2/A3/A4/A8/A9).
+
+    Every BLOCK raised here is ``hard``: these are safety invariants, not
+    autonomy preferences, so even an attended request cannot lift them.
+    """
     # Kill switch - enforced here so even a caller that forgets to check it stops.
     if kill_requested():
-        return Decision(Level.BLOCK, "kill switch engaged")
+        return Decision(Level.BLOCK, "kill switch engaged", hard=True)
 
     # A2 - filesystem sandbox: deny outright; this never reaches the model.
     if tool in _SANDBOX_TOOLS:
@@ -223,7 +283,8 @@ def _guards(tool: str, params: dict, base: Decision) -> Decision:
         for path in sandbox.paths_in(params):
             ok, why = sandbox.check(path)
             if not ok:
-                return Decision(Level.BLOCK, f"path sandbox blocked {path!r}: {why}")
+                return Decision(Level.BLOCK, f"path sandbox blocked {path!r}: {why}",
+                                hard=True)
 
     # A3 - shell command analysis: read-only runs, destructive is refused.
     if tool == "cmd_control" and base.level is not Level.BLOCK:
@@ -231,17 +292,29 @@ def _guards(tool: str, params: dict, base: Decision) -> Decision:
         cmd = str(params.get("command") or params.get("cmd") or "")
         category, why = command_policy.classify(cmd)
         if category == command_policy.CATEGORY_BLOCK:
-            return Decision(Level.BLOCK, f"shell command blocked: {why}")
+            return Decision(Level.BLOCK, f"shell command blocked: {why}", hard=True)
         if category == command_policy.CATEGORY_ALLOW:
             base = Decision(Level.ALLOW, f"shell command allowed: {why}")
         else:
             base = Decision(Level.CONFIRM, f"shell command needs confirmation: {why}")
 
+    # A4 - network egress: refuse denied or private destinations outright.
+    if tool in _EGRESS_TOOLS:
+        from agent import egress
+        ok, why = egress.guard(tool, params)
+        if not ok:
+            return Decision(Level.BLOCK, f"egress blocked: {why}", hard=True)
+
     # A9 - per-tool rate limits, enforced centrally so no caller can skip them.
     from agent import ratelimit
     allowed, why = ratelimit.check(tool)
     if not allowed:
-        return Decision(Level.BLOCK, why)
+        return Decision(Level.BLOCK, why, hard=True)
+
+    # A8 - speaker authorisation: a guest can never approve anything, so only
+    # read-only actions survive for a non-owner.
+    from agent import roles
+    base = roles.cap(tool, params, base)
 
     return base
 
@@ -290,7 +363,7 @@ def limits() -> dict:
 
 def status() -> dict:
     pol = load_policy()
-    return {
+    out = {
         "enabled":        bool(pol.get("enabled", True)),
         "default_level":  pol.get("default_level", "confirm"),
         "kill_switch":    kill_requested(),
@@ -298,6 +371,10 @@ def status() -> dict:
         "policy_file":    str(POLICY_PATH),
         "limits":         limits(),
     }
+    from agent import egress, roles
+    out["egress"] = egress.status()
+    out["roles"] = roles.status()
+    return out
 
 
 # --- tiny CLI: python -m agent.policy [status|kill|resume] --------------------

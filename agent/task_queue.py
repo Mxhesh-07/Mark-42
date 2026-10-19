@@ -60,12 +60,24 @@ class TaskQueue:
         self._worker_thread: threading.Thread | None = None
         self._max_concurrent = max_concurrent
         self._active_count   = 0
-        self._executor       = None  
+        self._executor       = None
+        self._approver       = None
+
+    def set_approver(self, approver) -> None:
+        """Register the callable that answers confirmation prompts (A1).
+
+        ``approver(tool, params, effect) -> bool`` is handed the *effect* of the
+        action, not just its tool name, so the yes it returns can be bound to
+        exactly that effect. Passing ``None`` restores fail-closed behaviour:
+        every confirmation-level action is denied.
+        """
+        self._approver  = approver
+        self._executor  = None   # rebuilt with the new approver
 
     def _get_executor(self):
         if self._executor is None:
             from agent.executor import AgentExecutor
-            self._executor = AgentExecutor()
+            self._executor = AgentExecutor(approver=self._approver)
         return self._executor
 
     def start(self) -> None:
@@ -275,7 +287,7 @@ class TaskQueue:
             pass
         try:
             from agent.executor import AgentExecutor
-            executor = AgentExecutor(task_id=task.task_id)
+            executor = AgentExecutor(task_id=task.task_id, approver=self._approver)
             result   = executor.execute(
                 goal        = task.goal,
                 speak       = task.speak,

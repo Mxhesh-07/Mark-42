@@ -18,15 +18,25 @@ if str(ROOT) not in sys.path:
 
 @pytest.fixture(autouse=True)
 def _isolate(tmp_path, monkeypatch):
-    """Never touch the real kill-switch file or leak rate-limit/breaker state."""
-    from agent import breaker, policy, ratelimit
+    """Never touch real kill-switch, audit or approval state, and never leak
+    rate-limit/breaker/role state between tests."""
+    from agent import approval, audit, breaker, policy, ratelimit, roles
 
     monkeypatch.setattr(policy, "KILL_FILE", tmp_path / "AUTONOMY_OFF")
+    monkeypatch.setattr(audit, "LOG_PATH", tmp_path / "audit_log.jsonl")
+    monkeypatch.setattr(approval, "KEY_PATH", tmp_path / "approval.key")
+    monkeypatch.setattr(approval, "USED_PATH", tmp_path / "approval_used.json")
+    audit._LAST_HASH = ""
+    approval.reset_for_tests()
     policy._killed.clear()
+    roles.clear()
     ratelimit.reset()
     breaker.reset()
     yield
+    audit._LAST_HASH = ""
+    approval.reset_for_tests()
     policy._killed.clear()
+    roles.clear()
     ratelimit.reset()
     breaker.reset()
 

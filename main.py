@@ -1347,6 +1347,38 @@ class JarvisLive:
             self.ui.jarvis_think("args",
                                  json.dumps(args, ensure_ascii=False, default=str))
 
+        # --- the permission gate, the same choke point as the background agent ---
+        # The user is present and made this request, so a soft `confirm` (or a
+        # soft policy-table `block`) is satisfied by attendance; a hard block —
+        # kill switch, sandbox escape, refused command, denied destination,
+        # non-owner speaker — is refused here too.
+        from agent import audit as _audit
+        from agent import policy as _policy
+        from agent.policy import Level as _Level
+
+        try:
+            _gate = _policy.evaluate_live(name, args)
+        except Exception as _e:
+            # Fail closed: a gate that cannot decide must not allow.
+            _gate = None
+            print(f"[JARVIS] ⚠️ permission gate error: {_e}")
+
+        if _gate is None or _gate.level is _Level.BLOCK:
+            _reason = _gate.reason if _gate is not None else "the permission gate failed"
+            print(f"[JARVIS] 🛑 Refused [{name}]: {_reason}")
+            self.ui.write_log(f"🛑 [{name}] {_reason}")
+            self.ui.jarvis_think("err", f"blocked [{name}]: {_reason}")
+            try:
+                _audit.record("action_denied", tool=name, parameters=args,
+                              level="block", outcome="blocked", detail=_reason)
+            except Exception:
+                pass
+            return types.FunctionResponse(
+                id=fc.id,
+                name=name,
+                response={"result": f"Refused: {_reason}"},
+            )
+
         loop   = asyncio.get_event_loop()
         result = "Done."
         failed = False
@@ -2151,6 +2183,19 @@ class JarvisLive:
             if len(samples) < 16000:
                 return
             result = identify_speaker(samples, sample_rate=SEND_SAMPLE_RATE)
+
+            # A8: turn the identified voice into authority. Noise/unavailable
+            # leave the role alone; an unrecognised voice is only restricted
+            # when roles.enforce_on_unknown is on.
+            try:
+                from agent import roles
+                role = roles.set_from_speaker(result["name"], status=result["status"])
+                if role != "owner":
+                    self.ui.jarvis_think("sys", f"role: {role}")
+                    print(f"[JARVIS] 🔐 Speaker role: {role}")
+            except Exception as e:
+                print(f"[JARVIS] ⚠️ role assignment failed: {e}")
+
             if result["status"] == "known":
                 self._last_speaker = (result["name"], result["confidence"])
                 self.ui.write_log(f"Speaker: {result['name']} ({result['confidence']:.0%})")

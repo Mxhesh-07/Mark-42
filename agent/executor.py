@@ -12,7 +12,7 @@ from typing import Callable
 from agent.planner       import create_plan, replan
 from agent.error_handler import analyze_error, generate_fix, ErrorDecision
 from agent.reflector     import decide_next_step, verify_goal
-from agent import audit, policy, untrusted
+from agent import approval, audit, policy, subprocess_sandbox, untrusted
 from agent.policy        import Level
 
 
@@ -101,8 +101,8 @@ def _run_generated_code(description: str, speak: Callable | None = None) -> str:
         system_instruction=(
             "You are an expert Python developer. "
             "Write clean, complete, working Python code. "
-            "Use standard library + common packages. "
-            "Install missing packages with subprocess + pip if needed. "
+            "Use the standard library and packages that are already installed; "
+            "do not install anything. "
             "Return ONLY the Python code. No explanation, no markdown, no backticks.\n\n"
             f"SYSTEM PATHS:\n"
             f"  Desktop   = r'{desktop}'\n"
@@ -129,11 +129,9 @@ def _run_generated_code(description: str, speak: Callable | None = None) -> str:
 
             print(f"[Executor] 🐍 Running generated code: {tmp_path}")
 
-            result = subprocess.run(
-                [sys.executable, tmp_path],
-                capture_output=True, text=True,
-                timeout=120, cwd=str(Path.home())
-            )
+            # A11: run it without this process's credentials, in a scratch
+            # directory, with a memory cap and a kill-on-close job object.
+            result = subprocess_sandbox.run_python_file(tmp_path, timeout=120)
         finally:
             if tmp_path:
                 try:
@@ -161,11 +159,19 @@ def _run_generated_code(description: str, speak: Callable | None = None) -> str:
     except Exception as e:
         raise RuntimeError(f"Generated code failed: {e}")
 
-def _inject_context(params: dict, tool: str, step_results: dict, goal: str = "") -> dict:
+def _inject_context(params: dict, tool: str, step_results: dict,
+                    goal: str = "") -> tuple[dict, bool]:
+    """Fold an earlier result into a file write, neutralised.
+
+    Returns ``(params, tainted)``. ``tainted`` is True when text that came from a
+    fetched source was folded in, so the caller can demand an out-of-band
+    confirmation for the resulting action (A5).
+    """
     if not step_results:
-        return params
+        return params, False
 
     params = dict(params)
+    tainted = False
 
     if tool == "file_controller" and params.get("action") in ("write", "create_file"):
         content = params.get("content", "")
@@ -186,9 +192,10 @@ def _inject_context(params: dict, tool: str, step_results: dict, goal: str = "")
                 combined = untrusted.safe_for_injection(combined)
                 translated = _translate_to_goal_language(combined, goal)
                 params["content"] = translated
+                tainted = True
                 print("[Executor] 💉 Injected + translated content")
 
-    return params
+    return params, tainted
 def _detect_language(text: str) -> str:
     import google.generativeai as genai
     genai.configure(api_key=_get_api_key())
@@ -336,11 +343,12 @@ class AgentExecutor:
 
     def __init__(self, task_id: str | None = None, approver=None):
         self.task_id       = task_id
-        self.approver      = approver    # optional callable(tool, params, reason) -> bool
+        self.approver      = approver    # optional callable(tool, params, effect) -> bool
         self._goal         = ""
         self._step_results = {}   # step number -> result string (for _inject_context)
         self._seq          = 0
         self._deadline     = None
+        self._approval_error = ""  # why the last approval was refused (A1)
 
     # ------------------------------------------------------------------ utils
 
@@ -353,6 +361,43 @@ class AgentExecutor:
             task_store.append_journal(self.task_id, entry)
         except Exception:
             pass
+
+    # ------------------------------------------------------------ approvals
+
+    def _request_approval(self, tool: str, params: dict, reason: str,
+                          tainted: bool) -> bool:
+        """Ask the user, then bind their answer to THIS effect (A1/A5).
+
+        The user is shown the effect, not the tool name — "delete
+        C:\\x\\y.txt (2.1 MB)", not "file_controller" — and a yes becomes a
+        single-use token tied to a hash of the tool and its full arguments. A
+        refusal, an expiry, a tampered token or a replay authorises nothing.
+        """
+        self._approval_error = ""
+        man = approval.manifest(tool, params, task_id=self.task_id)
+        effect = f"{man['effect']}  ({reason})"
+        if tainted:
+            effect += "  [arguments include text fetched from an untrusted source]"
+        print(f"[Executor] 🔏 Approval needed: {effect}")
+        _think("sys", f"approval needed: {effect}")
+
+        granted = False
+        if self.approver is not None:
+            try:
+                granted = bool(self.approver(tool, params, effect))
+            except Exception as e:
+                print(f"[Executor] ⚠️ approver error: {e}")
+                granted = False
+
+        ok, why = approval.authorize(man, granted)
+        if not ok:
+            self._approval_error = why
+            print(f"[Executor] 🔒 Approval refused: {why}")
+            return False
+        audit.record("approval", tool=tool, parameters=params, level="confirm",
+                     outcome="ok", detail=effect[:300],
+                     task_id=self.task_id, goal=self._goal)
+        return True
 
     # ------------------------------------------------------------ one action
 
@@ -376,27 +421,30 @@ class AgentExecutor:
                          task_id=self.task_id, goal=self._goal)
             raise _TaskAborted("the kill switch is engaged")
 
+        # A5: fold in (and neutralise) any injected content BEFORE the gate, so
+        # the approval below binds to the arguments that will actually run.
+        params, tainted = _inject_context(params, tool, self._step_results,
+                                         goal=self._goal)
+
         gate = policy.evaluate(tool, params)
         if gate.level is not Level.ALLOW:
             approved = False
-            if gate.level is Level.CONFIRM and self.approver is not None:
-                try:
-                    approved = bool(self.approver(tool, params, gate.reason))
-                except Exception as e:
-                    print(f"[Executor] ⚠️ approver error: {e}")
-                    approved = False
+            if gate.level is Level.CONFIRM:
+                approved = self._request_approval(tool, params, gate.reason, tainted)
             if not approved:
                 outcome = "blocked" if gate.level is Level.BLOCK else "denied"
-                print(f"[Executor] 🛑 {outcome.upper()}: [{tool}] — {gate.reason}")
-                _think("err", f"{outcome}: [{tool}] — {gate.reason}")
+                detail = gate.reason
+                if self._approval_error:
+                    detail = f"{gate.reason} ({self._approval_error})"
+                print(f"[Executor] 🛑 {outcome.upper()}: [{tool}] — {detail}")
+                _think("err", f"{outcome}: [{tool}] — {detail}")
                 audit.record("action_denied", tool=tool, parameters=params,
                              level=gate.level.value, outcome=outcome,
-                             detail=gate.reason, task_id=self.task_id, goal=self._goal)
-                return False, f"DENIED ({outcome}): {gate.reason}"
+                             detail=detail, task_id=self.task_id, goal=self._goal)
+                return False, f"DENIED ({outcome}): {detail}"
 
         self._seq += 1
         step_num = self._seq
-        params = _inject_context(params, tool, self._step_results, goal=self._goal)
 
         print(f"\n[Executor] ▶️ Action {step_num}: [{tool}] {desc}")
         _think("tool", f"action {step_num} [{tool}] {desc}")

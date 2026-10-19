@@ -52,5 +52,19 @@
     "default": { "per_minute": 30, "burst": 12 },
     "global": { "per_minute": 120, "burst": 40 },
     "tools": {}
+  },
+  "egress": {
+    "enabled": true,
+    "block_private": true,
+    "allow": [],
+    "deny": [],
+    "log_allowed": true
+  },
+  "roles": {
+    "enforce": true,
+    "enforce_on_unknown": false,
+    "default": "owner",
+    "map": { "owner": [], "guest": [] },
+    "extra_tools": { "guest": [], "unknown": [] }
   }
 }

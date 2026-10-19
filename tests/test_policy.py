@@ -94,3 +94,38 @@ def test_file_controller_outside_the_roots_is_blocked(policy_file):
     from pathlib import Path
     outside = str(Path.home().parent / "escaped.txt")
     assert policy.evaluate("file_controller", {"action": "read", "path": outside}).level is Level.BLOCK
+
+
+# --- attended (live voice) vs unattended (background agent) gate --------------
+
+def test_a_soft_confirmation_is_satisfied_by_attendance(policy_file):
+    assert policy.evaluate("send_message", {"to": "a@b.com"}).level is Level.CONFIRM
+    assert policy.evaluate_live("send_message", {"to": "a@b.com"}).level is Level.ALLOW
+
+
+def test_a_soft_policy_block_is_satisfied_by_attendance(policy_file):
+    decision = policy.evaluate("computer_settings", {"action": "shutdown"})
+    assert decision.level is Level.BLOCK and not decision.hard
+    assert policy.evaluate_live("computer_settings", {"action": "shutdown"}).level is Level.ALLOW
+
+
+def test_a_hard_block_survives_attendance(policy_file):
+    from pathlib import Path
+    outside = str(Path.home().parent / "escaped.txt")
+    decision = policy.evaluate_live("file_controller", {"action": "read", "path": outside})
+    assert decision.level is Level.BLOCK and decision.hard
+
+
+def test_the_kill_switch_is_hard_for_the_live_gate(policy_file):
+    policy.engage_kill_switch("test")
+    try:
+        decision = policy.evaluate_live("web_search", {})
+        assert decision.level is Level.BLOCK and decision.hard
+    finally:
+        policy.disengage_kill_switch()
+
+
+def test_status_reports_the_new_guards(policy_file):
+    status = policy.status()
+    assert "egress" in status
+    assert "roles" in status

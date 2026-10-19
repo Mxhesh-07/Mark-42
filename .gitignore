@@ -51,3 +51,16 @@ hologram_models/
 
 # Ignore structured log output
 logs/
+
+# Ignore agent security/runtime state (A1 approval tokens, D1 database, ...)
+memory/approval.key
+memory/approval_used.json
+memory/*.db
+memory/*.db-journal
+memory/*.db-wal
+memory/*.db-shm
+memory/backups/
+memory/crashes/
+memory/metrics.json
+memory/quota_ledger.json
+recordings/
