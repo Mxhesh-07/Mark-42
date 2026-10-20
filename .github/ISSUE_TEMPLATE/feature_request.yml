@@ -1,0 +1,26 @@
+name: Feature request
+description: Suggest a change or new capability
+title: "[FEAT] "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / motivation
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+    validations:
+      required: true
+  - type: textarea
+    id: risks
+    attributes:
+      label: Risks / safety
+  - type: textarea
+    id: tests
+    attributes:
+      label: Tests
+      description: How will we verify it?

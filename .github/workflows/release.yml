@@ -83,12 +83,21 @@ jobs:
           $v = python -X utf8 -m agent.version --version
           Compress-Archive -Path dist\MarkJarvis -DestinationPath "dist\MarkJarvis-$v-win64.zip"
 
+      - name: Generate CycloneDX SBOM (G6)
+        shell: bash
+        run: |
+          pip install cyclonedx-bom==4.6.1
+          # Generate SBOM for the runtime dependencies used in the bundle
+          cyclonedx-py requirements -i requirements.txt -o dist/MarkJarvis-${{ github.ref_name }}-sbom.cdx.json --format json || \
+          cyclonedx-py requirements -i requirements.txt -o dist/sbom.cdx.json --format json
+
       - uses: actions/upload-artifact@v4
         with:
           name: MarkJarvis-win64
           path: |
             dist/MarkJarvis-*.zip
             dist/MarkJarvis/manifest.json
+            dist/*.cdx.json
           if-no-files-found: error
 
   release:
@@ -119,4 +128,5 @@ jobs:
           files: |
             dist/MarkJarvis-*.zip
             dist/manifest.json
+            dist/*.cdx.json
           generate_release_notes: true

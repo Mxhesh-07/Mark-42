@@ -1,0 +1,28 @@
+name: Security report
+description: Report a security issue (do not post sensitive details publicly)
+title: "[SEC] "
+labels: ["security"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Do not** include secrets or exploitable details in public issues.
+        Contact the maintainers privately if the issue is high impact.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+    validations:
+      required: true
+  - type: textarea
+    id: impact
+    attributes:
+      label: Impact
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps (safe)
+  - type: textarea
+    id: mitigation
+    attributes:
+      label: Suggested mitigation
