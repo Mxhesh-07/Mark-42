@@ -67,3 +67,10 @@ config/approval_rules.json
 config/devices.json
 memory/quota_ledger.json
 recordings/
+
+# Packaging output (E1). `python -m agent.build` writes a per-machine spec that
+# embeds the staging path, plus the frozen bundle and its work directory. None of
+# it is source; the manifest travels with a Release, not in the repository.
+dist/
+build/
+*.spec

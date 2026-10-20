@@ -169,6 +169,40 @@ def test_status_aggregates_and_is_json_safe(policy_file):
         assert key in data
 
 
+def test_status_reports_which_build_is_answering(policy_file):
+    """E1: "which build is this?" is the first question in a bug report."""
+    from agent import version
+
+    build = health.status()["build"]
+    assert build["version"] == version.version()
+    assert build["release"] == version.release_name()
+    assert "formats" in build
+
+
+def test_status_survives_a_broken_version_module(policy_file, monkeypatch):
+    """A health check that raises while describing itself is the worse failure."""
+    import agent as agent_pkg
+
+    class Broken:
+        @staticmethod
+        def snapshot():
+            raise RuntimeError("boom")
+
+        @staticmethod
+        def version():
+            raise RuntimeError("boom")
+
+    monkeypatch.setattr(agent_pkg, "version", Broken, raising=False)
+    assert "error" in health.status()["build"]
+    assert health._server_version().startswith("JarvisHealth/")
+
+
+def test_the_http_identity_header_carries_the_real_version():
+    from agent import version
+
+    assert health._server_version() == f"JarvisHealth/{version.version()}"
+
+
 def test_queue_status_does_not_start_the_queue():
     import sys
 

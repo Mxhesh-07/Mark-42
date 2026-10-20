@@ -1,0 +1,122 @@
+# Tier 2 E1 — the release build.
+#
+# Deliberately separate from ci.yml. CI answers "is this commit correct?" and
+# runs on every push; this answers "what do we hand a user?" and runs only for a
+# tag, because a frozen bundle is large, slow and platform-specific, and building
+# one on every push would make the thing people wait for slower.
+#
+# The build does not trust itself. After freezing it runs `agent.build --verify`,
+# which checks the executable, the data directories the app opens by path, and —
+# the one that matters — that no credential file made it into the bundle. A
+# release that ships `config/api_keys.json` is the failure this whole job exists
+# to prevent, so it is a build failure, not a warning.
+
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to build (informational; pyproject.toml wins)"
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    name: onedir bundle (windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The manifest records the commit, so the checkout must be a real one.
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - run: python -m pip install --upgrade pip
+
+      # Pinned, like every other dependency in this repo. PyInstaller is the only
+      # heavy build-only dependency; it is not in requirements.txt because a user
+      # running from source never needs it.
+      - run: python -m pip install pyinstaller==6.11.1
+
+      # The bundle collects the same runtime dependencies the source tree needs.
+      # Keeping this list in one file means the frozen app and the source app
+      # cannot drift.
+      - run: python -m pip install -r requirements.txt
+
+      - name: Show what will be built
+        run: python -X utf8 -m agent.build --plan
+
+      - name: Build
+        run: python -X utf8 -m agent.build
+
+      - name: Verify the bundle
+        run: python -X utf8 -m agent.build --verify dist\MarkJarvis
+
+      - name: Fail if a credential shipped
+        shell: pwsh
+        run: |
+          $leaked = Get-ChildItem dist\MarkJarvis\config -File |
+            Where-Object { $_.Name -match '^(api_keys|email_config|spotify_config|alert_config|audio|approval_rules|devices)\.json$' }
+          if ($leaked) {
+            $leaked | ForEach-Object { Write-Error "credential shipped: $($_.Name)" }
+            exit 1
+          }
+          Write-Host "no credentials in the bundle"
+
+      - name: Write the manifest next to the bundle
+        run: python -X utf8 -c "from agent import build; build.write_manifest(build.bundle_dir())"
+
+      # The zip is what a user downloads. The manifest is attached separately as
+      # well, because auto-update (E3) reads the manifest without fetching the
+      # whole bundle first.
+      - name: Package
+        shell: pwsh
+        run: |
+          $v = python -X utf8 -m agent.version --version
+          Compress-Archive -Path dist\MarkJarvis -DestinationPath "dist\MarkJarvis-$v-win64.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MarkJarvis-win64
+          path: |
+            dist/MarkJarvis-*.zip
+            dist/MarkJarvis/manifest.json
+          if-no-files-found: error
+
+  release:
+    name: attach to Release
+    needs: build-windows
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: MarkJarvis-win64
+          path: dist
+
+      - name: Check the tag matches pyproject.toml
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          version="$(python -X utf8 -m agent.version --version)"
+          if [ "$tag" != "v$version" ]; then
+            echo "tag $tag does not match version v$version"
+            exit 1
+          fi
+          echo "releasing $tag"
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/MarkJarvis-*.zip
+            dist/manifest.json
+          generate_release_notes: true

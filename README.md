@@ -196,10 +196,10 @@ Mark-XXX-main/
 │   ├── audio.json          # mic device/level + gate tuning — gitignored
 │   └── api_keys.json       # YOUR KEYS — gitignored, never committed
 ├── tests/                  # pytest suite (policy, sandbox, audit, voice_id, …)
-├── .github/                # CI workflow (ruff + pytest, Windows + Ubuntu)
+├── .github/                # CI (ruff + pytest) and Release (E1 frozen bundle) workflows
 ├── requirements.txt        # main (Windows desktop) dependencies, pinned
 ├── requirements-dev.txt    # lint/test dependencies (no heavy imports)
-├── pyproject.toml          # ruff + pytest configuration
+├── pyproject.toml          # version, ruff and pytest configuration
 ├── LICENSE                 # MIT
 ├── requirements-cloud.txt  # minimal deps for the cloud monitor
 ├── setup.py                # one-shot installer (requirements + Playwright)
@@ -428,7 +428,7 @@ Set `"discover": true` on a provider to auto-list models from `GET {base_url}/mo
 
 ```bash
 pip install -r requirements-dev.txt    # pytest, ruff and numpy only
-python -m pytest -q                    # 697 tests, no heavy imports
+python -m pytest -q                    # 745 tests, no heavy imports
 python -m ruff check .                 # lint (config in pyproject.toml)
 python -m compileall -q main.py agent  # syntax check
 python -m agent.audit verify           # confirm the audit log is untampered
@@ -445,6 +445,9 @@ python -m agent.tool_contract --check  # tools declared == dispatched == registe
 python -m agent.redact "some text"     # what redaction would mask at each level
 python -m agent.quota                  # model-call ledger + the budget caps
 python -m agent.forget                 # what is stored about you; --yes to erase it
+python -m agent.version                # build identity: version, git sha, format versions
+python -m agent.build --plan           # what a frozen bundle would contain (no PyInstaller)
+python -m agent.build --verify dist/MarkJarvis   # audit a finished bundle
 python -m memory.backup export         # zip the runtime state (no secrets)
 ```
 
@@ -453,10 +456,35 @@ classifier, rate limiter, circuit breakers, prompt-injection defense, structured
 logging, audit chain, atomic writes, egress control, voice roles, signed approvals,
 the degradation ladder, metrics/tracing, health checks, crash bundles, the serialized
 PortAudio door, the self-model, the risk/opinion scorer, the initiative engine, the
-SQLite memory store, backup/restore, the confirmation modal, the device layer and
-the speaker-recognition helpers — and
+SQLite memory store, backup/restore, the confirmation modal, the device layer, the
+speaker-recognition helpers and the packaging build — and
 deliberately imports nothing Windows-only, so it runs unchanged on Linux. CI runs
 ruff and pytest on **Windows and Ubuntu** (`.github/workflows/ci.yml`).
+
+### Building a release (E1)
+
+The version has one source of truth: `[project] version` in `pyproject.toml`.
+Everything else reads it — the manifest, the zip name, `agent.version`, and the
+health endpoint's report — so nothing can disagree about which build this is.
+
+```bash
+python -m agent.build            # freeze with PyInstaller, then write + check the manifest
+python -m agent.build --spec     # write the spec only (works without PyInstaller)
+python -m agent.build --verify dist/MarkJarvis
+```
+
+Pushing a tag `v*` runs `.github/workflows/release.yml`: it freezes a onedir
+bundle, runs `--verify`, fails if the bundle contains a credential file, writes a
+versioned `manifest.json`, and attaches both to the GitHub Release. The build
+plan, the spec and the verifier are all covered by tests that never import
+PyInstaller, so a broken path is found on a laptop rather than after a tag.
+
+`--verify` checks the executable, the data directories the app opens by path
+(`config/`, `core/`, `prompts/`) and — the one that matters — that no credential
+shipped. `config/` is *staged* before it is collected, minus `api_keys.json`,
+`email_config.json`, `spotify_config.json`, `alert_config.json`, `audio.json`,
+`approval_rules.json` and `devices.json`; the `*.example.json` templates do ship,
+because they are how a user is told what to write.
 
 ---
 

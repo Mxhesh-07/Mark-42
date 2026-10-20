@@ -1,5 +1,11 @@
-# Tooling configuration. Deliberately only [tool.*] sections: the project is run
-# from source (see setup.py), not installed as a package.
+# Tooling configuration. Deliberately only [tool.*] sections with one exception:
+# [project] carries the version, because that is where every Python tool looks
+# for it (agent/version.py reads it). The project is still run from source (see
+# setup.py), not installed as a package.
+
+[project]
+name    = "mark-jarvis"
+version = "0.1.0"
 
 [tool.ruff]
 line-length    = 120

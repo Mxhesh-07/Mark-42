@@ -267,6 +267,14 @@ def ready() -> dict:
 def status() -> dict:
     out: dict = {"ts": time.time()}
     try:
+        from agent import version
+
+        # Which build is answering. First question in any bug report, and before
+        # E1 there was nothing to answer it with. Read-only and cheap.
+        out["build"] = version.snapshot()
+    except Exception as e:
+        out["build"] = {"error": str(e)}
+    try:
         from agent import policy
 
         out["policy"] = policy.status()
@@ -324,11 +332,26 @@ def status() -> dict:
 
 # --- HTTP surface -------------------------------------------------------------
 
+def _server_version() -> str:
+    """`JarvisHealth/0.1.0` — the real version, not a string that drifts.
+
+    Falls back to the old literal if the version module cannot be read: a health
+    endpoint that raises while describing itself is worse than one with a stale
+    version string.
+    """
+    try:
+        from agent import version
+
+        return f"JarvisHealth/{version.version()}"
+    except Exception:
+        return "JarvisHealth/1.0"
+
+
 def _handler_factory(payload_fn):
     from http.server import BaseHTTPRequestHandler
 
     class Handler(BaseHTTPRequestHandler):
-        server_version = "JarvisHealth/1.0"
+        server_version = _server_version()
 
         def _send(self, code: int, body: str, content_type: str = "application/json") -> None:
             data = body.encode("utf-8")
