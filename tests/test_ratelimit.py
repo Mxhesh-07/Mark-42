@@ -65,5 +65,5 @@ def test_the_gate_enforces_the_limit(policy_file, write_policy):
     _write(write_policy,
            default={"per_minute": 60, "burst": 1},
            global_={"per_minute": 600, "burst": 100})
-    assert policy.evaluate("web_search", {}).level is Level.ALLOW
+    assert policy.evaluate("web_search", {"query": "x"}).level is Level.ALLOW
     assert policy.evaluate("web_search", {}).level is Level.BLOCK

@@ -11,11 +11,14 @@ def test_known_read_only_tool_is_allowed(policy_file):
 
 
 def test_side_effecting_tool_needs_confirmation(policy_file):
-    assert policy.evaluate("send_message", {"to": "a", "body": "b"}).level is Level.CONFIRM
+    assert policy.evaluate("send_message", {"receiver": "a", "message_text": "b", "platform": "whatsapp"}).level is Level.CONFIRM
 
 
 def test_unlisted_tool_falls_back_to_the_default(policy_file):
-    assert policy.evaluate("brand_new_tool", {}).level is Level.CONFIRM
+    """An unknown tool has no schema: fail closed (hard block), never 'no constraints'."""
+    d = policy.evaluate("brand_new_tool", {})
+    assert d.level is Level.BLOCK and d.hard
+    assert "no declared tool" in d.reason
 
 
 def test_action_override_allows_a_read(policy_file):
@@ -50,8 +53,12 @@ def test_kill_switch_blocks_everything(policy_file):
 def test_invalid_level_string_falls_back_to_confirm(policy_file, write_policy):
     data = json.loads(json.dumps(policy.DEFAULT_POLICY))
     data["tools"] = {"weird": "banana"}
+    # "weird" has no declared schema -> hard block regardless of policy table.
+    # The policy-table fallback still exists, but schema validation runs first.
     write_policy(data)
-    assert policy.evaluate("weird", {}).level is Level.CONFIRM
+    d = policy.evaluate("weird", {})
+    assert d.level is Level.BLOCK and d.hard
+    assert "no declared tool" in d.reason
 
 
 def test_unreadable_policy_falls_back_to_safe_defaults(policy_file):
@@ -77,15 +84,15 @@ def test_status_reports_kill_and_limits(policy_file):
 # --- A3 shell-command analysis is enforced through the gate -------------------
 
 def test_cmd_control_read_only_command_is_allowed(policy_file):
-    assert policy.evaluate("cmd_control", {"command": "dir"}).level is Level.ALLOW
+    assert policy.evaluate("cmd_control", {"task": "dir"}).level is Level.ALLOW
 
 
 def test_cmd_control_destructive_command_is_blocked(policy_file):
-    assert policy.evaluate("cmd_control", {"command": "rm -rf /"}).level is Level.BLOCK
+    assert policy.evaluate("cmd_control", {"task": "rm -rf /"}).level is Level.BLOCK
 
 
 def test_cmd_control_unknown_command_needs_confirmation(policy_file):
-    assert policy.evaluate("cmd_control", {"command": "mkdir newdir"}).level is Level.CONFIRM
+    assert policy.evaluate("cmd_control", {"task": "mkdir newdir"}).level is Level.CONFIRM
 
 
 # --- A2 path sandboxing is enforced through the gate --------------------------
@@ -99,8 +106,8 @@ def test_file_controller_outside_the_roots_is_blocked(policy_file):
 # --- attended (live voice) vs unattended (background agent) gate --------------
 
 def test_a_soft_confirmation_is_satisfied_by_attendance(policy_file):
-    assert policy.evaluate("send_message", {"to": "a@b.com"}).level is Level.CONFIRM
-    assert policy.evaluate_live("send_message", {"to": "a@b.com"}).level is Level.ALLOW
+    assert policy.evaluate("send_message", {"receiver": "a", "message_text": "b", "platform": "whatsapp"}).level is Level.CONFIRM
+    assert policy.evaluate_live("send_message", {"receiver": "a", "message_text": "b", "platform": "whatsapp"}).level is Level.ALLOW
 
 
 def test_a_soft_policy_block_is_satisfied_by_attendance(policy_file):
@@ -119,7 +126,7 @@ def test_a_hard_block_survives_attendance(policy_file):
 def test_the_kill_switch_is_hard_for_the_live_gate(policy_file):
     policy.engage_kill_switch("test")
     try:
-        decision = policy.evaluate_live("web_search", {})
+        decision = policy.evaluate_live("web_search", {"query": "x"})
         assert decision.level is Level.BLOCK and decision.hard
     finally:
         policy.disengage_kill_switch()
@@ -152,8 +159,8 @@ def test_read_only_blocks_messages_and_shell(policy_file):
     from agent import degrade
 
     degrade.set_level("READ_ONLY")
-    assert policy.evaluate("send_message", {"to": "a@b.com"}).level is Level.BLOCK
-    assert policy.evaluate("cmd_control", {"command": "dir"}).level is Level.BLOCK
+    assert policy.evaluate("send_message", {"receiver": "a", "message_text": "b", "platform": "whatsapp"}).level is Level.BLOCK
+    assert policy.evaluate("cmd_control", {"task": "dir"}).level is Level.BLOCK
 
 
 def test_monitor_stops_every_tool(policy_file):
@@ -167,7 +174,7 @@ def test_a_degraded_block_is_not_liftable_by_attendance(policy_file):
     from agent import degrade
 
     degrade.set_level("READ_ONLY")
-    decision = policy.evaluate_live("send_message", {"to": "a@b.com"})
+    decision = policy.evaluate_live("send_message", {"receiver": "a", "message_text": "b", "platform": "whatsapp"})
     assert decision.level is Level.BLOCK and decision.hard
 
 
@@ -176,12 +183,12 @@ def test_a_degraded_block_is_not_liftable_by_attendance(policy_file):
 def test_evaluate_records_a_metric(policy_file):
     from agent import metrics
 
-    policy.evaluate("web_search", {})
+    policy.evaluate("web_search", {"query": "x"})
     assert metrics.value("policy.decision", level="allow") >= 1
 
 
 def test_attendance_is_recorded(policy_file):
     from agent import metrics
 
-    policy.evaluate_live("send_message", {"to": "a@b.com"})
+    policy.evaluate_live("send_message", {"receiver": "a", "message_text": "b", "platform": "whatsapp"})
     assert metrics.value("policy.attended", tool="send_message") == 1

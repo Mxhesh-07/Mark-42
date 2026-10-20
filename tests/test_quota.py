@@ -269,7 +269,7 @@ def test_the_gate_blocks_writes_after_a_budget_breach(budget_policy, midday):
     budget_policy(max_calls_per_hour=1, max_calls_per_day=100)
     quota.record("gemini", "m", now=midday)
 
-    decision = policy.evaluate("cmd_control", {"command": "echo hi"})
+    decision = policy.evaluate("cmd_control", {"task": "echo hi"})
     assert decision.level is policy.Level.BLOCK
     assert decision.hard is True
     assert "READ_ONLY" in decision.reason

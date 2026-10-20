@@ -30,3 +30,34 @@ select = ["E9", "F541", "F811", "F821", "F823"]
 testpaths = ["tests"]
 addopts   = "-q"
 filterwarnings = ["ignore::UserWarning"]
+markers = [
+    "unit: fast isolated tests (policy, memory, gate, args, validators)",
+    "integration: mocked integration across modules",
+    "abuse: injection/abuse and adversarial inputs",
+    "slow: tests that take longer than a second or touch subprocesses",
+]
+
+[tool.coverage.run]
+source = ["agent", "main"]
+branch = true
+omit = [
+    "tests/*",
+    "agent/*__pycache__/*",
+    "*_env/*",
+    "genai_env/*",
+    "mediapipe_env/*",
+    "*/site-packages/*",
+]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+fail_under = 0
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "except Exception:",
+]

@@ -340,6 +340,19 @@ def _guards(tool: str, params: dict, base: Decision) -> Decision:
     if kill_requested():
         return Decision(Level.BLOCK, "kill switch engaged", hard=True)
 
+    # G2 - the arguments must match the schema the model was handed. Hard, and
+    # first, because every guard below reads `params` and a malformed call makes
+    # those reads meaningless: a sandbox check on a path that is an integer, a
+    # command classifier on a command that is a list. Refused, never repaired.
+    from agent import tool_args
+
+    problems = tool_args.check(tool, params)
+    if problems:
+        return Decision(
+            Level.BLOCK,
+            f"malformed arguments for {tool}: {tool_args.describe(problems)}",
+            hard=True)
+
     # B2 - degradation ladder: a degraded system stops the riskiest work first.
     # READ_ONLY is "observe only" (reads still pass, writes do not) and MONITOR
     # stops tools entirely. Both are hard: a system that believes it is broken
@@ -365,7 +378,7 @@ def _guards(tool: str, params: dict, base: Decision) -> Decision:
     # A3 - shell command analysis: read-only runs, destructive is refused.
     if tool == "cmd_control" and base.level is not Level.BLOCK:
         from agent import command_policy
-        cmd = str(params.get("command") or params.get("cmd") or "")
+        cmd = str(params.get("command") or params.get("cmd") or params.get("task") or "")
         category, why = command_policy.classify(cmd)
         if category == command_policy.CATEGORY_BLOCK:
             return Decision(Level.BLOCK, f"shell command blocked: {why}", hard=True)

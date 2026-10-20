@@ -81,4 +81,4 @@ def test_gate_blocks_a_private_destination(policy_file):
 
 
 def test_gate_allows_a_public_destination(policy_file):
-    assert policy.evaluate("browser_control", {"url": "https://example.com"}).level is Level.ALLOW
+    assert policy.evaluate("browser_control", {"action": "go_to", "url": "https://example.com"}).level is Level.ALLOW
