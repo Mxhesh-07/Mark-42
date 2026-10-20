@@ -5,7 +5,21 @@ import platform
 import shutil
 import subprocess
 from pathlib import Path
-from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeout
+
+PlaywrightTimeout = Exception
+
+
+def _import_playwright():
+    global async_playwright, PlaywrightTimeout
+    if async_playwright is None:
+        from playwright.async_api import async_playwright as _ap
+        from playwright.async_api import TimeoutError as _pte
+        async_playwright = _ap
+        PlaywrightTimeout = _pte
+    return async_playwright
+
+
+async_playwright = None
 
 def _get_default_browser_id() -> str:
     """Returns raw default browser identifier string for current OS."""
@@ -169,6 +183,7 @@ class _BrowserThread:
         self._loop.run_forever()
 
     async def _init(self):
+        _import_playwright()
         self._playwright = await async_playwright().start()
 
     def run(self, coro, timeout: int = 30):
@@ -184,6 +199,7 @@ class _BrowserThread:
 
     async def _launch(self):
         if self._playwright is None:
+            _import_playwright()
             self._playwright = await async_playwright().start()
 
         prog_id                        = _get_default_browser_id()
