@@ -2775,6 +2775,11 @@ def main():
             print(f"[JARVIS] confirmation modal off: {_approver_err}")
 
         jarvis = JarvisLive(ui)
+        # T3.7: typed commands go through the same path as voice turns.
+        try:
+            ui.on_text_input = jarvis.speak
+        except Exception:
+            pass
         try:
             asyncio.run(jarvis.run())
         except KeyboardInterrupt:

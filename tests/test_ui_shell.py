@@ -61,6 +61,19 @@ def test_notification_rows_preserve_unread_state():
     assert row["kind"] == "email"
 
 
+def test_setup_saves_a_key_atomically_and_refuses_an_empty_one(tmp_path, monkeypatch):
+    from ui import setup
+
+    monkeypatch.setattr(setup, "CONFIG_DIR", tmp_path)
+    monkeypatch.setattr(setup, "API_FILE", tmp_path / "api_keys.json")
+    assert setup.save_key("  ") is False
+    assert setup.save_key("abc") is True
+    import json
+
+    saved = json.loads((tmp_path / "api_keys.json").read_text(encoding="utf-8"))
+    assert saved["gemini_api_key"] == "abc"
+
+
 def test_opacity_is_clamped():
     class FakeRoot:
         def __init__(self):

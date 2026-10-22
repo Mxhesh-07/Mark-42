@@ -250,6 +250,7 @@ class JarvisUI:
             self._show_setup_ui()
 
         self._screenshot_mode = False
+        self.on_text_input = None
         try:
             # T3.10 / T3.15 / T3.30: the three controls that must be reachable
             # without hunting through menus.
@@ -262,6 +263,8 @@ class JarvisUI:
             self.root.bind("<Control-Shift-T>",
                            lambda _e: self.toggle_always_on_top())
             self.root.bind("<Control-Shift-M>", lambda _e: self.minimize_window())
+            self.root.bind("<Control-k>", lambda _e: self.open_composer())
+            self.root.bind("<Control-h>", lambda _e: self.open_transcript())
             # T3.14: Escape closes transient windows, so the HUD is usable
             # without a mouse.
             self.root.bind("<Escape>", lambda _e: self._close_transient())
@@ -596,44 +599,28 @@ class JarvisUI:
             time.sleep(0.1)
 
     def _show_setup_ui(self):
-        self.setup_frame = tk.Frame(
-            self.root, bg="#00080d",
-            highlightbackground=C_PRI, highlightthickness=1
-        )
-        self.setup_frame.place(relx=0.5, rely=0.5, anchor="center")
-
-        tk.Label(self.setup_frame, text="◈  INITIALISATION REQUIRED",
-                 fg=C_PRI, bg="#00080d", font=_font(13, bold=True)).pack(pady=(18, 4))
-        tk.Label(self.setup_frame,
-                 text="Enter your Gemini API key to boot J.A.R.V.I.S.",
-                 fg=C_MID, bg="#00080d", font=_font(9)).pack(pady=(0, 10))
-
-        tk.Label(self.setup_frame, text="GEMINI API KEY",
-                 fg=C_DIM, bg="#00080d", font=_font(9)).pack(pady=(8, 2))
-        self.gemini_entry = tk.Entry(
-            self.setup_frame, width=52, fg=C_TEXT, bg="#000d12",
-            insertbackground=C_TEXT, borderwidth=0, font=_font(10), show="*"
-        )
-        self.gemini_entry.pack(pady=(0, 4))
-
-        tk.Button(
-            self.setup_frame, text="▸  INITIALISE SYSTEMS",
-            command=self._save_api_keys, bg=C_BG, fg=C_PRI,
-            activebackground="#003344", font=_font(10),
-            borderwidth=0, pady=8
-        ).pack(pady=14)
+        # T3.3: the panel lives in ui/setup.py; the HUD only keeps the handle.
+        try:
+            from ui import setup
+            self.setup_frame, self.gemini_entry = setup.build(self)
+        except Exception:
+            self.setup_frame = None
+            self.gemini_entry = None
+            self.write_log("SYS: setup panel unavailable — add config/api_keys.json")
 
     def _save_api_keys(self):
-        gemini = self.gemini_entry.get().strip()
-        if not gemini:
+        # The setup panel saves itself; kept for callers that still call this.
+        if getattr(self, "gemini_entry", None) is None:
             return
-        os.makedirs(CONFIG_DIR, exist_ok=True)
-        with open(API_FILE, "w", encoding="utf-8") as f:
-            json.dump({"gemini_api_key": gemini}, f, indent=4)
-        self.setup_frame.destroy()
-        self._api_key_ready = True
-        self.status_text = "ONLINE"
-        self.write_log("SYS: Systems initialised. JARVIS online.")
+        try:
+            from ui import setup
+            if setup.save_key(self.gemini_entry.get()):
+                self.setup_frame.destroy()
+                self._api_key_ready = True
+                self.status_text = "ONLINE"
+                self.write_log("SYS: Systems initialised. JARVIS online.")
+        except Exception:
+            pass
 
     def create_dashboard_panels(self):
 
@@ -1017,6 +1004,37 @@ class JarvisUI:
             return window.move_to(self.root, corner)
         except Exception:
             return False
+
+    def submit_text(self, text: str) -> bool:
+        """T3.7: hand typed text to the live session (main wires this up)."""
+        callback = getattr(self, "on_text_input", None)
+        if callable(callback):
+            try:
+                callback(str(text))
+                return True
+            except Exception as exc:
+                self.jarvis_think("err", f"text input failed: {exc}")
+                return False
+        self.jarvis_think("sys", "text input is not connected")
+        return False
+
+    def open_composer(self):
+        """T3.7: floating text composer."""
+        try:
+            from ui import composer_view
+            return composer_view.build(self)
+        except Exception as exc:
+            self.jarvis_think("err", f"composer unavailable: {exc}")
+            return None
+
+    def open_transcript(self):
+        """T3.8: transcript viewer with search and export."""
+        try:
+            from ui import transcript_view
+            return transcript_view.build(self)
+        except Exception as exc:
+            self.jarvis_think("err", f"transcript unavailable: {exc}")
+            return None
 
     def hologram_status(self) -> str:
         """T3.20: one line for the projector's state."""
