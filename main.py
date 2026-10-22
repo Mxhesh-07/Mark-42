@@ -1225,12 +1225,17 @@ class JarvisLive:
         self._echo_dropped = 0                   # mic chunks suppressed (diagnostic)
 
         # --- noise gate state -------------------------------------------------
-        self._gate_win   = []                    # recent muted-chunk RMS levels
-        self._gate_floor = 0.0                   # current floor estimate (display)
-        self._gate_open  = False
-        self._gate_last  = 0.0                   # last time the gate saw speech
-        self._gate_min   = GATE_MIN_FLOOR        # clamps (config-overridable)
-        self._gate_max   = GATE_MAX_FLOOR
+        # T1.6: gate state/logic lives in jarvis/mic_gate.py.
+        from jarvis.mic_gate import MicGate
+        self._gate = MicGate(
+            open_factor=GATE_OPEN_FACTOR,
+            hold_factor=GATE_HOLD_FACTOR,
+            hangover_s=GATE_HANGOVER_S,
+            percentile=GATE_PERCENTILE,
+            window=GATE_WINDOW,
+            min_floor=GATE_MIN_FLOOR,
+            max_floor=GATE_MAX_FLOOR,
+        )
         self._vad_carry  = b""                   # leftover bytes for webrtcvad
         self._last_speaker = None                # last (name, confidence) heard
 
@@ -2105,8 +2110,10 @@ class JarvisLive:
         # Noise-gate settings (see the NOISE_GATE block above).
         gate_on      = bool(AUDIO_CONFIG.get("noise_gate", NOISE_GATE))
         gate_factor  = float(AUDIO_CONFIG.get("gate_factor", GATE_OPEN_FACTOR))
-        self._gate_min = float(AUDIO_CONFIG.get("gate_floor_min", GATE_MIN_FLOOR))
-        self._gate_max = float(AUDIO_CONFIG.get("gate_floor_max", GATE_MAX_FLOOR))
+        self._gate.min_floor = float(
+            AUDIO_CONFIG.get("gate_floor_min", GATE_MIN_FLOOR))
+        self._gate.max_floor = float(
+            AUDIO_CONFIG.get("gate_floor_max", GATE_MAX_FLOOR))
         gate_sent    = 0     # chunks actually forwarded (diagnostic)
         gate_dropped = 0     # chunks replaced with silence (diagnostic)
 
@@ -2167,9 +2174,9 @@ class JarvisLive:
                     if gate_on:
                         total = gate_sent + gate_dropped
                         muted = (gate_dropped / total * 100) if total else 0.0
-                        print(f"[JARVIS] 🎙️ Mic gate: floor≈{self._gate_floor:.0f} "
+                        print(f"[JARVIS] 🎙️ Mic gate: floor≈{self._gate.floor:.0f} "
                               f"RMS, muted {muted:.0f}% of the last 12s "
-                              f"(now {'open' if self._gate_open else 'shut'})")
+                              f"(now {'open' if self._gate.open else 'shut'})")
                     win_start, win_peak = time.time(), 0
                     gate_sent = gate_dropped = 0
 
@@ -2217,48 +2224,11 @@ class JarvisLive:
                           vad_speech=None) -> bool:
         """Say whether this chunk is speech, tracking the room noise floor.
 
-        The chunk is kept if *either* detector says speech: webrtcvad's `vad_speech`
-        frame verdict (when supplied) or the chunk's RMS relative to the tracked
-        noise floor. The union means real speech is never dropped because one
-        detector was unsure, while both stay quiet on pure noise.
-
-        The floor is a low percentile of recent *muted* chunk levels (not a
-        running mean): a cough, a door or the keyboard are brief bursts and must
-        not drag the floor up, and the clamp stops a genuinely loud room from
-        raising the threshold beyond normal speech. Opening is instant so the
-        first word is never lost, and the gate stays open GATE_HANGOVER_S past
-        the last speech frame so word tails are never clipped.
+        The logic (union of webrtcvad and RMS, muted-only floor learning,
+        hangover) lives in `jarvis/mic_gate.MicGate` so it can be tested without
+        a microphone; this method only supplies the per-call gate switch.
         """
-        if not gate_on or not samples.size:
-            return True
-
-        x = samples.astype(np.float32)
-        x -= x.mean()                              # ignore any DC offset
-        rms = float(np.sqrt(np.mean(x * x)))
-        now = time.time()
-
-        floor = float(np.percentile(self._gate_win, GATE_PERCENTILE)) \
-            if self._gate_win else rms
-        floor = min(max(floor, self._gate_min), self._gate_max)
-        self._gate_floor = floor
-
-        rms_speech = rms > floor * (GATE_HOLD_FACTOR if self._gate_open
-                                    else gate_factor)
-        speak_now = rms_speech or bool(vad_speech)
-
-        if speak_now:
-            self._gate_open = True
-            self._gate_last = now
-        elif not (self._gate_open and now - self._gate_last <= GATE_HANGOVER_S):
-            self._gate_open = False
-
-        if not self._gate_open:
-            # Learn the floor only while muted, so speech cannot lift it.
-            self._gate_win.append(rms)
-            if len(self._gate_win) > GATE_WINDOW:
-                del self._gate_win[:-GATE_WINDOW]
-
-        return self._gate_open
+        return self._gate.keeps(samples, gate_on, gate_factor, vad_speech)
 
     def _identify_speaker(self, audio_data: bytes):
         """Run speaker identification on captured audio."""
