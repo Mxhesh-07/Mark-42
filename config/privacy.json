@@ -1,0 +1,5 @@
+{
+  "store_raw_audio": false,
+  "store_transcripts": true,
+  "require_consent_for_recording": true
+}
