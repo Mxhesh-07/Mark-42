@@ -50,6 +50,16 @@ def save_api_key(key: str) -> None:
     key = (key or "").strip()
     if not key:
         raise ValueError("empty API key")
+    try:
+        from agent.secrets_guard import check
+
+        ok, reason = check(key)
+        if not ok:
+            raise ValueError(reason)
+    except ValueError:
+        raise
+    except Exception:
+        pass
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     existing: dict = {}
     try:

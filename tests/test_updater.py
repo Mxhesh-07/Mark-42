@@ -26,7 +26,7 @@ def test_first_run_completes_only_with_key_and_marker(tmp_path, monkeypatch):
     first_run.mark_complete()
     assert first_run.is_complete() is False          # no key yet
 
-    first_run.save_api_key("test-key")
+    first_run.save_api_key("k" * 40)
     assert first_run.is_complete() is True
 
     with pytest.raises(ValueError):

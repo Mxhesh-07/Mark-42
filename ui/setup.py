@@ -17,8 +17,14 @@ API_FILE = CONFIG_DIR / "api_keys.json"
 
 def save_key(key: str) -> bool:
     key = (key or "").strip()
-    if not key:
-        return False
+    try:
+        from agent.secrets_guard import check
+        ok, _reason = check(key)
+        if not ok:
+            return False
+    except Exception:
+        if not key:
+            return False
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     tmp = API_FILE.with_suffix(".tmp")
     tmp.write_text(json.dumps({"gemini_api_key": key}, indent=4),

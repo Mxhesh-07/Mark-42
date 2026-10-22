@@ -463,23 +463,13 @@ def _apply_mic_level(device_name: str, level: float) -> None:
     sets "mic_level", so JARVIS never changes system audio on its own.
     """
     try:
-        from ctypes import cast, POINTER
-        from comtypes import CLSCTX_ALL
-        from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
+        from core import platform as platform_adapter
 
-        enum = AudioUtilities.GetDeviceEnumerator()
-        needle = device_name.lower()
-        for dev in AudioUtilities.GetAllDevices(data_flow=1):
-            if needle and needle in dev.FriendlyName.lower():
-                imm = enum.GetDevice(dev.id)
-                iface = imm.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
-                vol = cast(iface, POINTER(IAudioEndpointVolume))
-                vol.SetMute(0, None)
-                vol.SetMasterVolumeLevelScalar(max(0.0, min(1.0, float(level))), None)
-                print(f"[JARVIS] 🔉 Mic level -> {vol.GetMasterVolumeLevelScalar():.2f} "
-                      f"({vol.GetMasterVolumeLevel():.1f} dB) on {dev.FriendlyName}")
-                return
-        print(f"[JARVIS] ⚠️ mic '{device_name}' not found for mic_level")
+        if platform_adapter.set_mic_level(device_name, level):
+            print(f"[JARVIS] 🔉 Mic level -> {level:.2f} on {device_name}")
+        else:
+            print(f"[JARVIS] ⚠️ could not set mic level for '{device_name}' "
+                  f"(unsupported platform or device not found)")
     except Exception as e:
         print(f"[JARVIS] ⚠️ could not set mic level: {e}")
 

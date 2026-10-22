@@ -1,0 +1,18 @@
+# Tier 1.7 — secret scanning.
+#
+# Default gitleaks rules plus the allowlist below. The allowlist covers test
+# fixtures (synthetic keys), example configs that must show the shape of a value,
+# and documentation. It deliberately does NOT cover config/*.json, so a real key
+# added there is still caught before it can be committed.
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "synthetic fixtures and documented examples"
+paths = [
+  '''tests/.*''',
+  '''config/.*\.example\.json''',
+  '''docs/.*\.md''',
+  '''\.gitleaks\.toml$''',
+]

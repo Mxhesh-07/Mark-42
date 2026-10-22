@@ -72,19 +72,13 @@ def volume_set(value: int):
     value = max(0, min(100, value))
     if _OS == "Windows":
         try:
-            from ctypes import cast, POINTER
-            from comtypes import CLSCTX_ALL
-            from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
-            import math
-            devices   = AudioUtilities.GetSpeakers()
-            interface = devices.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
-            vol       = cast(interface, POINTER(IAudioEndpointVolume))
-            vol_db    = -65.25 if value == 0 else max(-65.25, 20 * math.log10(value / 100))
-            vol.SetMasterVolumeLevel(vol_db, None)
-            print(f"[Settings] 🔊 Volume → {value}%")
-            return
+            from core import platform as platform_adapter
+            if platform_adapter.set_master_volume(value / 100):
+                print(f"[Settings] 🔊 Volume → {value}%")
+                return
+            raise RuntimeError("platform adapter unavailable")
         except Exception as e:
-            print(f"[Settings] ⚠️ pycaw failed: {e}")
+            print(f"[Settings] ⚠️ volume set failed: {e}")
     elif _OS == "Darwin":
         subprocess.run(["osascript", "-e", f"set volume output volume {value}"])
         return
