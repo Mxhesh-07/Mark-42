@@ -165,6 +165,12 @@ class JarvisUI:
         self.bg.place(x=0, y=0)
         self.create_dashboard_panels()
 
+        try:
+            from ui.layout_spec import Metrics
+            self.metrics = Metrics.from_size(W, H)
+        except Exception:
+            self.metrics = None
+
         LW     = int(W * 0.72)
         LH     = 138
         GAP    = 10
@@ -172,6 +178,11 @@ class JarvisUI:
         THINK_W = LW - LOG_W - GAP
         LX     = (W - LW) // 2
         LY     = H - LH - 36
+        if self.metrics is not None:
+            LW, LH, GAP = (self.metrics.content_width, self.metrics.log_height,
+                           self.metrics.gap)
+            LOG_W, THINK_W = self.metrics.log_width, self.metrics.think_width
+            LX, LY = self.metrics.left_x, self.metrics.panes_y
 
         self.log_frame = tk.Frame(self.root, bg=C_PANEL,
                                   highlightbackground=C_MID,
@@ -246,6 +257,14 @@ class JarvisUI:
             self.root.bind("<F8>", lambda _e: self.show_audit())
             self.root.bind("<F10>", lambda _e: self.toggle_screenshot_mode())
             self.root.bind("<F7>", lambda _e: self.open_settings())
+            self.root.bind("<F6>", lambda _e: self.show_notifications())
+            self.root.bind("<F11>", lambda _e: self.show_debug_overlay())
+            self.root.bind("<Control-Shift-T>",
+                           lambda _e: self.toggle_always_on_top())
+            self.root.bind("<Control-Shift-M>", lambda _e: self.minimize_window())
+            # T3.14: Escape closes transient windows, so the HUD is usable
+            # without a mouse.
+            self.root.bind("<Escape>", lambda _e: self._close_transient())
         except Exception:
             pass
 
@@ -319,7 +338,15 @@ class JarvisUI:
             self.status_blink = not self.status_blink
 
         self._draw()
-        self.root.after(16, self._animate)
+        # T3.6: paced animation. 16 ms is ~60 fps; an iconified window drops to
+        # 4 fps instead of burning a core redrawing something nobody sees.
+        delay = 16
+        try:
+            if self.root.state() == "iconic":
+                delay = 250
+        except Exception:
+            pass
+        self.root.after(delay, self._animate)
 
     def _draw(self):
         c    = self.bg
@@ -749,13 +776,26 @@ class JarvisUI:
             self.root, text="", fg=C_DIM, bg=C_BG,
             font=_font(8), anchor="w",
         )
-        self.status_strip_label.place(x=15, y=self.H - 20,
-                                      width=self.W - 30, height=14)
+        status_geo = (self.metrics.pane("status") if self.metrics is not None
+                      else {"x": 15, "y": self.H - 20,
+                            "width": self.W - 30, "height": 14})
+        self.status_strip_label.place(**status_geo)
         self._refresh_status_strip()
 
         self.update_dashboard()
         self.refresh_memory_panel()
         self.update_agent_panel()
+
+        # T3.26: the dashboard labels are terse on purpose; tooltips carry the
+        # explanation without adding permanent chrome.
+        try:
+            from ui.widgets import Tooltip
+            Tooltip(self.task_label, "Current plan steps. Cancelled steps are marked ⊘.")
+            Tooltip(self.memory_label, "What JARVIS remembers. Stored locally in memory/.")
+            if hasattr(self, "agent_label"):
+                Tooltip(self.agent_label, "Per-agent state: ○ idle, ◉ active, ◈ thinking.")
+        except Exception:
+            pass
 
 
     def update_dashboard(self):
@@ -806,28 +846,60 @@ class JarvisUI:
         self.memory_label.config(text=text)
     
     def refresh_memory_panel(self):
-        memory = load_memory()
+        # T3.5: memory lives on disk; read it off the UI thread and apply the
+        # result on the Tk thread. A slow/failing disk can no longer freeze the
+        # animation, and one refresh cannot overlap the next.
+        if not getattr(self, "_memory_refreshing", False):
+            self._memory_refreshing = True
 
-        name = (
-            memory.get("identity", {})
-            .get("name", {})
-            .get("value", "Unknown")
-        )
+            def work():
+                try:
+                    memory = load_memory()
+                except Exception:
+                    memory = {}
+                try:
+                    self.root.after(0, lambda: self._apply_memory(memory))
+                except Exception:
+                    self._memory_refreshing = False
 
-        project = (
-            memory.get("projects", {})
-            .get("main_project", {})
-            .get("value", "None")
-        )
+            try:
+                threading.Thread(target=work, daemon=True,
+                                 name="MemoryPanel").start()
+            except Exception:
+                self._memory_refreshing = False
 
-        self.memory_label.config(
-            text=f"User: {name}\nProject: {project}"
-        )
+        try:
+            self.root.after(8000, self.refresh_memory_panel)
+        except Exception:
+            pass
 
-        self.root.after(
-            3000,
-            self.refresh_memory_panel
-        )
+    def _apply_memory(self, memory):
+        try:
+            name = (
+                (memory or {}).get("identity", {})
+                .get("name", {})
+                .get("value", "Unknown")
+            )
+
+            project = (
+                (memory or {}).get("projects", {})
+                .get("main_project", {})
+                .get("value", "None")
+            )
+
+            if not name or name == "Unknown":
+                try:
+                    from ui.widgets import empty_state
+                    text = empty_state("memory")
+                except Exception:
+                    text = "User: Unknown\nProject: None"
+            else:
+                text = f"User: {name}\nProject: {project}"
+            self.memory_label.config(text=text)
+        except Exception:
+            pass
+        finally:
+            self._memory_refreshing = False
 
 
     def set_agent_status(self, text):
@@ -865,6 +937,115 @@ class JarvisUI:
             self.agent_states[name] = state
 
     # ================= TIER 3 SHELL HELPERS =================
+
+    def show_notifications(self, limit: int = 20) -> None:
+        """T3.12: notification centre digest in the thinking pane."""
+        try:
+            from ui import notifications
+            lines = notifications.notification_lines(limit)
+            summary = notifications.digest()
+        except Exception:
+            lines, summary = [], "notifications unavailable"
+        self.jarvis_think("sys", summary)
+        for line in lines:
+            self.jarvis_think("notify", line)
+
+    def _close_transient(self) -> None:
+        """T3.14: Escape closes any Toplevel we opened, not the HUD."""
+        try:
+            for child in self.root.winfo_children():
+                if isinstance(child, tk.Toplevel):
+                    child.destroy()
+        except Exception:
+            pass
+
+    def show_debug_overlay(self) -> None:
+        """T3.29: one-key diagnostic dump (no secrets, no screenshot)."""
+        try:
+            from ui import support
+            state = support.status_snapshot()
+        except Exception:
+            state = {}
+        lines = [f"{key}: {value}" for key, value in sorted(state.items())]
+        lines.append(f"tick: {getattr(self, 'tick', 0)}")
+        lines.append(f"typing queue: {len(getattr(self, 'typing_queue', ()))}")
+        lines.append(f"think queue: {len(getattr(self, '_think_q', ()) or ())}")
+        lines.append(f"mic level: {getattr(self, 'mic_level', 0):.3f}")
+        for line in lines:
+            self.jarvis_think("sys", line)
+
+    def toggle_click_through(self) -> bool:
+        """T3.19: let clicks pass through the floating HUD."""
+        want = not getattr(self, "_click_through", False)
+        try:
+            from ui.layout import set_click_through
+            ok = set_click_through(self.root, want)
+        except Exception:
+            ok = False
+        if ok:
+            self._click_through = want
+            self.jarvis_think("sys", f"click-through {'on' if want else 'off'}")
+        else:
+            self.jarvis_think("err", "click-through is Windows-only")
+        return self._click_through if ok else False
+
+    def set_opacity(self, value: float) -> bool:
+        try:
+            from ui.layout import set_opacity
+            return set_opacity(self.root, value)
+        except Exception:
+            return False
+
+    def minimize_window(self) -> bool:
+        """T3.1: keyboard/window management without editing code."""
+        try:
+            from ui import window
+            return window.minimize(self.root)
+        except Exception:
+            return False
+
+    def toggle_always_on_top(self) -> bool:
+        try:
+            from ui import window
+            return window.toggle_always_on_top(self.root)
+        except Exception:
+            return False
+
+    def snap_window(self, corner: str) -> bool:
+        try:
+            from ui import window
+            return window.move_to(self.root, corner)
+        except Exception:
+            return False
+
+    def hologram_status(self) -> str:
+        """T3.20: one line for the projector's state."""
+        try:
+            from ui import hologram_control
+            return hologram_control.status_line()
+        except Exception:
+            return "hologram: unavailable"
+
+    def hologram_launch(self, name: str | None = None, *,
+                        prompt: str | None = None) -> dict:
+        try:
+            from ui import hologram_control
+            result = hologram_control.launch(name, prompt=prompt)
+        except Exception as exc:
+            result = {"ok": False, "reason": str(exc)}
+        kind = "sys" if result.get("ok") else "err"
+        self.jarvis_think(kind, f"hologram launch: {result}")
+        return result
+
+    def hologram_close(self) -> dict:
+        try:
+            from ui import hologram_control
+            result = hologram_control.close()
+        except Exception as exc:
+            result = {"ok": False, "reason": str(exc)}
+        self.jarvis_think("sys" if result.get("ok") else "err",
+                          f"hologram close: {result}")
+        return result
 
     def status_strip(self) -> str:
         """T3.13: provider/model/quota/mode/queue as one line."""

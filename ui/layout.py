@@ -88,6 +88,40 @@ def save_window(root, *, extra: dict | None = None) -> bool:
         return False
 
 
+def set_click_through(root, enabled: bool) -> bool:
+    """T3.19: make the floating HUD ignore the mouse, or stop ignoring it.
+
+    On Windows this sets WS_EX_TRANSPARENT | WS_EX_LAYERED on the toplevel. On
+    other platforms it is a no-op that reports False, so callers can tell the
+    user rather than silently pretending the toggle worked.
+    """
+    if sys.platform != "win32":
+        return False
+    try:
+        import ctypes
+
+        hwnd = int(root.winfo_id())
+        user32 = ctypes.windll.user32
+        ex_style = user32.GetWindowLongW(hwnd, -20)   # GWL_EXSTYLE
+        transparent, layered = 0x00000020, 0x00080000
+        if enabled:
+            user32.SetWindowLongW(hwnd, -20, ex_style | transparent | layered)
+        else:
+            user32.SetWindowLongW(hwnd, -20, ex_style & ~transparent)
+        return True
+    except Exception:
+        return False
+
+
+def set_opacity(root, value: float) -> bool:
+    """Clamp and apply window opacity (0.2–1.0)."""
+    try:
+        root.attributes("-alpha", max(0.2, min(1.0, float(value))))
+        return True
+    except Exception:
+        return False
+
+
 def apply_window(root, screen_w: int | None = None,
                  screen_h: int | None = None) -> dict:
     """Apply a saved geometry, clamped. Returns the window dict it used."""
