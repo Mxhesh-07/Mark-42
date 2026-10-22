@@ -290,6 +290,7 @@ class JarvisUI:
             self.root.bind("<Control-Shift-T>",
                            lambda _e: self.toggle_always_on_top())
             self.root.bind("<Control-Shift-M>", lambda _e: self.minimize_window())
+            self.root.bind("<Control-Shift-H>", lambda _e: self.hide_to_tray())
             self.root.bind("<Control-k>", lambda _e: self.open_composer())
             self.root.bind("<Control-h>", lambda _e: self.open_transcript())
             self.root.bind("<Control-t>", lambda _e: self.open_timeline())
@@ -303,8 +304,22 @@ class JarvisUI:
         self._animate()
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
+        # T3.1: optional tray. start() never raises and never keeps the app
+        # alive; JARVIS_NO_TRAY=1 or a non-Windows session simply skips it.
+        self._tray = None
+        try:
+            from ui import tray
+            self._tray = tray.start(self)
+        except Exception:
+            self._tray = None
+
     def _on_close(self):
         """T3.18/T3.23: composed shutdown, then exit. Errors never block closing."""
+        try:
+            if getattr(self, "_tray", None) is not None:
+                self._tray.stop()
+        except Exception:
+            pass
         try:
             from ui import splash
             splash.shutdown(self)
@@ -920,8 +935,31 @@ class JarvisUI:
         lines = [f"{key}: {value}" for key, value in sorted(state.items())]
         lines.append(f"tick: {getattr(self, 'tick', 0)}")
         lines.append(f"typing queue: {len(getattr(self, 'typing_queue', ()))}")
-        lines.append(f"think queue: {len(getattr(self, '_think_q', ()) or ())}")
+        think_q = getattr(self, '_think_q', None)
+        try:
+            lines.append(f"think queue: {think_q.qsize() if think_q else 0}")
+        except Exception:
+            lines.append(f"think queue: {len(think_q or ())}")
         lines.append(f"mic level: {getattr(self, 'mic_level', 0):.3f}")
+        try:
+            import psutil
+
+            p = psutil.Process()
+            lines.append(f"rss mb: {p.memory_info().rss / 1024 / 1024:.1f}")
+            lines.append(f"cpu pct: {p.cpu_percent(interval=None):.1f}")
+        except Exception:
+            pass
+        try:
+            gate = getattr(self, '_gate', None)
+            if gate is not None and hasattr(gate, 'noise_floor'):
+                lines.append(f"mic gate floor: {float(gate.noise_floor):.1f}")
+        except Exception:
+            pass
+        try:
+            from ui import layout
+            lines.append(f"font_scale: {getattr(self, '_font_scale', 1.0):.2f}")
+        except Exception:
+            pass
         for line in lines:
             self.jarvis_think("sys", line)
 
@@ -952,6 +990,24 @@ class JarvisUI:
         try:
             from ui import window
             return window.minimize(self.root)
+        except Exception:
+            return False
+
+    def hide_to_tray(self) -> bool:
+        """T3.1: hide the HUD; the tray icon brings it back."""
+        try:
+            from ui import window
+            hidden = window.hide_to_tray(self.root)
+            if hidden:
+                self.jarvis_think("sys", "hidden to tray — click the tray icon to return")
+            return hidden
+        except Exception:
+            return False
+
+    def show_from_tray(self) -> bool:
+        try:
+            from ui import window
+            return window.show_from_tray(self.root)
         except Exception:
             return False
 

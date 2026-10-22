@@ -16,6 +16,32 @@ def minimize(root) -> bool:
         return False
 
 
+def hide_to_tray(root) -> bool:
+    """T3.1: remove the HUD from the taskbar without ending the session."""
+    try:
+        root.withdraw()
+        return True
+    except Exception:
+        return False
+
+
+def show_from_tray(root) -> bool:
+    try:
+        root.deiconify()
+        try:
+            root.state("normal")
+        except Exception:
+            pass
+        root.lift()
+        try:
+            root.focus_force()
+        except Exception:
+            pass
+        return True
+    except Exception:
+        return False
+
+
 def maximize(root) -> bool:
     try:
         if root.state() == "zoomed":

@@ -21,9 +21,19 @@ and a worse place to approve a risky one.
 | `F11` | Debug overlay: tick, queues, mic level, provider state |
 | `Ctrl+Shift+T` | Toggle always-on-top |
 | `Ctrl+Shift+M` | Minimise |
+| `Ctrl+Shift+H` | Hide to the system tray (tray icon brings it back) |
 
 The text composer sends through exactly the same path as a voice turn, so a
 typed command is subject to the same permission gate and audit log.
+
+## Tray
+
+On Windows with `pystray` installed, a drawn arc-reactor icon sits in the
+notification area while JARVIS runs. Its menu can show/hide the HUD, open
+Settings, or quit (which runs the same composed shutdown as the window close
+button). The icon is optional: missing `pystray`, no Windows session, or
+`JARVIS_NO_TRAY=1` simply means no tray, and the HUD is unaffected. The icon
+runs on a background thread; all callbacks are marshalled onto the Tk thread.
 
 ## Panes
 

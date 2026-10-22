@@ -6,6 +6,8 @@ pyaudio==0.2.14
 google-genai==1.68.0
 google-generativeai==0.8.6
 pillow==12.3.0
+# T3.1: system tray (Windows-only at runtime; imported lazily, never required).
+pystray==0.19.5
 requests==2.32.5
 beautifulsoup4==4.14.3
 playwright==1.58.0
