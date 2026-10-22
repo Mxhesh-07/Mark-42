@@ -76,3 +76,18 @@ and Luhn-valid card numbers are masked before the request is built. Email addres
 phone numbers are deliberately **not** masked outbound — they are usually the request
 itself ("email Sam about Thursday") — but they are masked in logs and crash bundles,
 along with home paths. The level is configurable in `config/autonomy.json` → `privacy`.
+
+
+
+## H1: explicit exits (audio/text/screen)
+| Exit | Where | Notes |
+|---|---|---|
+| Live audio (mic) | Google Gemini Live API (or configured live endpoint) | Never stored by default; transcripts may be derived locally. |
+| Text prompts/responses | Gemini / tier-2 providers (`config/providers.json`) | Redacted via `agent.redact` before egress. |
+| Screenshots/vision | Gemini / vision providers | Sent only when user invokes screen features; redacted where applicable. |
+| Web search | DuckDuckGo / configured search | Queries may include user text; avoid PII. |
+| Browser automation | Playwright (local browser) | No remote proxy by default. |
+| Device actions (ADB/SSH/HTTP) | Target devices on local/Tailscale mesh | Devices must be private; `shell` blocked; `sms`/`call` require confirmation. |
+| Email/SMS/notifications | Configured providers (gitignored configs) | Only when explicitly requested. |
+
+All exits are gated by policy/egress; audit logs record tool decisions.
