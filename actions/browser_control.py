@@ -239,7 +239,14 @@ class _BrowserThread:
                 "Chrome/120.0.0.0 Safari/537.36"
             )
         )
-        self._page = await self._context.new_page()
+        try:
+            # Reuse existing page if available
+            if hasattr(self, "_page") and self._page and not self._page.is_closed():
+                pass
+            else:
+                self._page = await self._context.new_page()
+        except Exception:
+            self._page = await self._context.new_page()
 
     async def _close(self):
         global _bt_started
