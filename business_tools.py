@@ -192,6 +192,21 @@ def scan_document(image_path: str) -> dict:
     try:
         from PIL import Image
         import pytesseract
+        import hashlib
+
+        try:
+            raw = open(image_path, "rb").read()
+            ch = hashlib.sha256(raw).hexdigest()
+        except Exception:
+            ch = hashlib.sha256(str(image_path).encode("utf-8")).hexdigest()
+        try:
+            from agent import ocr_cache
+
+            cached = ocr_cache.get("document", ch)
+            if cached:
+                return {"status": "ok", "cached": True, **cached}
+        except Exception:
+            pass
 
         img = Image.open(image_path)
         text = pytesseract.image_to_string(img)
@@ -205,6 +220,12 @@ def scan_document(image_path: str) -> dict:
         }
         data["scanned_docs"].append(doc)
         _save_data(data)
+        try:
+            from agent import ocr_cache
+
+            ocr_cache.put("document", ch, doc)
+        except Exception:
+            pass
         return doc
     except Exception as e:
         return {"error": str(e), "text": ""}
