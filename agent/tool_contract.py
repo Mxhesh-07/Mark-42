@@ -44,6 +44,7 @@ def get_base_dir() -> Path:
 BASE_DIR = get_base_dir()
 MAIN_PATH = BASE_DIR / "main.py"
 SCHEMA_PATH = BASE_DIR / "jarvis" / "tools_schema.py"
+DISPATCH_PATH = BASE_DIR / "jarvis" / "tool_runner.py"
 POLICY_PATH = BASE_DIR / "config" / "autonomy.json"
 README_PATH = BASE_DIR / "README.md"
 
@@ -99,9 +100,17 @@ def declarations() -> list[dict]:
     return found
 
 
+def dispatch_source() -> str:
+    """The file that holds `_execute_tool` (falls back to main.py)."""
+    try:
+        return DISPATCH_PATH.read_text(encoding="utf-8")
+    except Exception:
+        return main_source()
+
+
 def dispatched() -> set[str]:
     """Tool names with a real dispatch branch in ``_execute_tool``."""
-    return set(_DISPATCH_RE.findall(main_source()))
+    return set(_DISPATCH_RE.findall(dispatch_source()))
 
 
 def registered() -> dict:
