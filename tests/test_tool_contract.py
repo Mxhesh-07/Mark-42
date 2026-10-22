@@ -42,6 +42,7 @@ def fake_source(tmp_path, monkeypatch):
         pol = tmp_path / "autonomy.json"
         pol.write_text(json.dumps(policy), encoding="utf-8")
         monkeypatch.setattr(tool_contract, "MAIN_PATH", main)
+        monkeypatch.setattr(tool_contract, "SCHEMA_PATH", main)
         monkeypatch.setattr(tool_contract, "POLICY_PATH", pol)
         return tool_contract.findings()
 

@@ -1,10 +1,10 @@
 """Tier 2 G3/G4 — the tool contract.
 
-A tool is declared to the model in ``main.TOOL_DECLARATIONS``, dispatched in
-``main._execute_tool`` and gated by ``config/autonomy.json``. Those three lists
-drift apart silently: a tool can be declared but not dispatched (the model calls
-it and nothing happens), dispatched but not declared (nothing can ever call it),
-or omitted from policy (it silently inherits the default level).
+A tool is declared to the model in ``jarvis.tools_schema.TOOL_DECLARATIONS``,
+dispatched in ``main._execute_tool`` and gated by ``config/autonomy.json``. Those
+three lists drift apart silently: a tool can be declared but not dispatched (the
+model calls it and nothing happens), dispatched but not declared (nothing can
+ever call it), or omitted from policy (it silently inherits the default level).
 
 This module reads all three **statically** — ``main`` is never imported, so the
 check is fast and free of import side effects — and reports every disagreement.
@@ -43,6 +43,7 @@ def get_base_dir() -> Path:
 
 BASE_DIR = get_base_dir()
 MAIN_PATH = BASE_DIR / "main.py"
+SCHEMA_PATH = BASE_DIR / "jarvis" / "tools_schema.py"
 POLICY_PATH = BASE_DIR / "config" / "autonomy.json"
 README_PATH = BASE_DIR / "README.md"
 
@@ -53,14 +54,22 @@ def main_source() -> str:
     return MAIN_PATH.read_text(encoding="utf-8")
 
 
+def schema_source() -> str:
+    """The file that holds `TOOL_DECLARATIONS` (falls back to main.py)."""
+    try:
+        return SCHEMA_PATH.read_text(encoding="utf-8")
+    except Exception:
+        return main_source()
+
+
 def declarations() -> list[dict]:
-    """Every entry in ``main.TOOL_DECLARATIONS``, as plain data.
+    """Every entry in ``TOOL_DECLARATIONS``, as plain data.
 
     A malformed entry (no ``name``, a non-literal ``parameters``) is returned
     with whatever could be read plus an ``_error`` key, so the check reports it
     rather than raising.
     """
-    source = main_source()
+    source = schema_source()
     tree = ast.parse(source)
     found: list[dict] = []
 
