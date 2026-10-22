@@ -1,7 +1,7 @@
-google-genai
-google-generativeai
-numpy
-playwright
-beautifulsoup4
-requests
-psutil
+google-genai==1.68.0
+google-generativeai==0.8.6
+numpy==1.26.4
+playwright==1.58.0
+beautifulsoup4==4.14.3
+requests==2.32.5
+psutil==7.2.1

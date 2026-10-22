@@ -2722,6 +2722,16 @@ def main():
     def runner():
         ui.wait_for_api_key()
 
+        # E2: first-run wizard (microphone choice with a level meter). Runs once;
+        # the marker is written only after the questions are answered. Import
+        # failures or a non-tty console never stop startup.
+        try:
+            from agent import first_run
+            if not first_run.is_complete():
+                first_run.run()
+        except Exception as _first_run_err:
+            print(f"[JARVIS] first-run wizard skipped: {_first_run_err}")
+
         # W1: the initiative tick rides the task queue's worker loop, so that
         # loop has to be running for a proactive nudge to ever fire. Starting it
         # is idempotent.
@@ -2745,6 +2755,16 @@ def main():
 
     threading.Thread(target=runner, daemon=True).start()
     ui.root.mainloop()
+
+    # E3: apply a staged, signature-verified update only after the UI has closed.
+    try:
+        from agent import updater
+
+        if updater.pending() is not None:
+            result = updater.apply_on_exit()
+            print(f"[Update] {result.get('status')}: {result.get('reason', result.get('script', ''))}")
+    except Exception as _update_err:
+        print(f"[Update] apply on exit skipped: {_update_err}")
 
 if __name__ == "__main__":
     main()
