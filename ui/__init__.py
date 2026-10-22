@@ -292,6 +292,7 @@ class JarvisUI:
             self.root.bind("<Control-Shift-M>", lambda _e: self.minimize_window())
             self.root.bind("<Control-k>", lambda _e: self.open_composer())
             self.root.bind("<Control-h>", lambda _e: self.open_transcript())
+            self.root.bind("<Control-t>", lambda _e: self.open_timeline())
             self.root.bind("<Control-c>", lambda _e: self.copy_selection())
             # T3.14: Escape closes transient windows, so the HUD is usable
             # without a mouse.
@@ -704,9 +705,52 @@ class JarvisUI:
                 text = empty_state("tasks")
             except Exception:
                 text = "No tasks yet."
+        elif all(isinstance(item, dict) for item in tasks):
+            # T3.11: dict items are timeline steps (name/status/detail/cancel).
+            for item in tasks:
+                self.timeline_add(item.get("name", "step"),
+                                  detail=item.get("detail", ""),
+                                  status=item.get("status", "pending"),
+                                  cancel=item.get("cancel"))
+            text = "\n".join(self._timeline().lines())
         else:
-            text = "\n".join(tasks)
+            text = "\n".join(str(item) for item in tasks)
         self.task_label.config(text=text)
+
+
+    # --- T3.11 activity timeline -------------------------------------------
+
+    def _timeline(self):
+        if getattr(self, "timeline", None) is None:
+            from ui.timeline import Timeline
+            self.timeline = Timeline()
+        return self.timeline
+
+    def timeline_add(self, name: str, *, detail: str = "",
+                     status: str = "pending", cancel=None) -> dict:
+        step = self._timeline().add(name, detail=detail, status=status,
+                                    cancel=cancel)
+        self.task_label.config(text="\n".join(self._timeline().lines()))
+        return step
+
+    def timeline_status(self, name, status: str) -> bool:
+        ok = self._timeline().set_status(name, status)
+        self.task_label.config(text="\n".join(self._timeline().lines()))
+        return ok
+
+    def timeline_cancel(self, name) -> bool:
+        ok = self._timeline().cancel(name)
+        self.task_label.config(text="\n".join(self._timeline().lines()))
+        return ok
+
+    def open_timeline(self):
+        """T3.11: per-step status with cancel buttons."""
+        try:
+            from ui import timeline_view
+            return timeline_view.build(self)
+        except Exception as exc:
+            self.jarvis_think("err", f"activity view unavailable: {exc}")
+            return None
 
 
     def set_memory(self, text):

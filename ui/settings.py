@@ -56,6 +56,19 @@ def build(ui) -> tk.Toplevel:
                    activebackground=colors["bg"], activeforeground=colors["text"],
                    font=theme.font(9)).pack(anchor="w", padx=14, pady=(8, 2))
 
+    # --- click-through (T3.19) ---
+    ct_var = tk.BooleanVar(value=False)
+
+    def _toggle_click_through() -> None:
+        actual = ui.toggle_click_through()
+        ct_var.set(bool(actual))
+
+    tk.Checkbutton(win, text="Click-through (Windows only)",
+                   variable=ct_var, command=_toggle_click_through,
+                   fg=colors["text"], bg=colors["bg"], selectcolor=colors["panel"],
+                   activebackground=colors["bg"], activeforeground=colors["text"],
+                   font=theme.font(9)).pack(anchor="w", padx=14, pady=2)
+
     # --- kill switch ---
     kill = support.kill_state()
     tk.Label(win, text=kill.get("label", ""), fg=colors["red"] if kill.get("engaged") else colors["green"],

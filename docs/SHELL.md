@@ -10,6 +10,7 @@ and a worse place to approve a risky one.
 | --- | --- |
 | `Ctrl+K` | Floating text composer (voice-first, not voice-only) |
 | `Ctrl+H` | Transcript viewer: search, export `.txt` / `.json` |
+| `Ctrl+T` | Activity timeline: per-step status and cancel |
 | `Ctrl+C` | Copy the selection from the log or thinking pane |
 | `Esc` | Close the topmost transient window (settings, transcript, composer) |
 | `F6` | Notification digest in the thinking pane |
@@ -37,8 +38,8 @@ typed command is subject to the same permission gate and audit log.
 ## Settings
 
 Theme (Arc Blue, Warm Amber, Mono, High-Contrast), audio cues (off by default),
-kill switch, hologram launch/close, and a read-only status block. The dialog
-never displays a credential.
+click-through (Windows only), kill switch, hologram launch/close, and a read-only
+status block. The dialog never displays a credential.
 
 `font_scale` in `config/ui.json` enlarges every HUD font at once (0.8–2.0).
 

@@ -75,6 +75,34 @@ def test_setup_saves_a_key_atomically_and_refuses_an_empty_one(tmp_path, monkeyp
     assert saved["gemini_api_key"] == "k" * 40
 
 
+def test_set_tasks_accepts_timeline_steps_and_strings():
+    import ui
+
+    class FakeLabel:
+        def __init__(self):
+            self.text = ""
+
+        def config(self, **kwargs):
+            self.text = kwargs.get("text", self.text)
+
+    hud = object.__new__(ui.JarvisUI)
+    hud.task_label = FakeLabel()
+    hud.timeline = None
+    ui.JarvisUI.set_tasks(hud, [
+        {"name": "search", "status": "running"},
+        {"name": "write", "status": "pending", "cancel": lambda: None},
+    ])
+    assert "⟳ search" in hud.task_label.text
+    assert "□ write" in hud.task_label.text
+    assert ui.JarvisUI.timeline_status(hud, "search", "done") is True
+    assert "✓ search" in hud.task_label.text
+    assert ui.JarvisUI.timeline_cancel(hud, "write") is True
+    assert "⊘ write" in hud.task_label.text
+
+    ui.JarvisUI.set_tasks(hud, ["plain step"])
+    assert hud.task_label.text == "plain step"
+
+
 def test_copy_selection_uses_the_clipboard_and_ignores_empty_selection():
     import ui
 
