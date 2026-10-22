@@ -231,21 +231,23 @@ class _BrowserThread:
                 args=["--start-maximized"]
             )
 
-        self._context = await self._browser.new_context(
-            viewport=None,
-            user_agent=(
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/120.0.0.0 Safari/537.36"
+        # F6: one context per browser session. Only create a new one when the
+        # existing context is missing or has been closed; otherwise reuse it so
+        # cookies/logins/session state survive across actions.
+        if self._context is None:
+            self._context = await self._browser.new_context(
+                viewport=None,
+                user_agent=(
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/120.0.0.0 Safari/537.36"
+                )
             )
-        )
-        try:
-            # Reuse existing page if available
-            if hasattr(self, "_page") and self._page and not self._page.is_closed():
-                pass
-            else:
-                self._page = await self._context.new_page()
-        except Exception:
+
+        pages = [p for p in self._context.pages if not p.is_closed()]
+        if pages:
+            self._page = pages[-1]
+        else:
             self._page = await self._context.new_page()
 
     async def _close(self):
