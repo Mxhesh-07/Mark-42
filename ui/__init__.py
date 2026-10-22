@@ -42,6 +42,21 @@ C_PANEL  = "#010c10"
 C_GREEN  = "#00ff88"
 C_RED    = "#ff3333"
 
+# T3.17: one palette for the whole HUD. The defaults above are Arc Blue; a
+# different theme in config/ui.json (Warm Amber / Mono / High-Contrast) replaces
+# them at import time, so widgets that still use the constants follow along.
+try:
+    from ui.theme import palette as _palette
+
+    _P = _palette()
+    C_BG, C_PRI, C_MID = _P["bg"], _P["pri"], _P["mid"]
+    C_DIM, C_DIMMER = _P["dim"], _P["dimmer"]
+    C_ACC, C_ACC2 = _P["acc"], _P["acc2"]
+    C_TEXT, C_PANEL = _P["text"], _P["panel"]
+    C_GREEN, C_RED = _P["green"], _P["red"]
+except Exception:
+    _P = {}
+
 
 _ACTIVE_UI = None
 THINK_MAX_LINES = 800

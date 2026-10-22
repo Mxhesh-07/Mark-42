@@ -11,6 +11,14 @@ def test_themes_all_have_the_same_keys():
         assert set(colors) == keys, name
 
 
+def test_hud_constants_follow_the_configured_theme():
+    import ui
+
+    colors = theme.palette()
+    assert ui.C_PRI == colors["pri"]
+    assert ui.C_BG == colors["bg"]
+
+
 def test_unknown_theme_falls_back_rather_than_raising():
     assert theme.palette("does_not_exist") == theme.THEMES[theme.DEFAULT_THEME]
     assert theme.save_theme("does_not_exist") is False

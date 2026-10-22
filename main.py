@@ -296,56 +296,32 @@ def _owner_name() -> str:
 
 def _load_audio_config() -> dict:
     """Optional user overrides (input device, noise gate). Never fatal."""
-    try:
-        with open(BASE_DIR / "config" / "audio.json", encoding="utf-8") as f:
-            cfg = json.load(f)
-        return cfg if isinstance(cfg, dict) else {}
-    except Exception:
-        return {}
+    from jarvis.device_setup import load_audio_config
+
+    return load_audio_config(BASE_DIR)
 
 
 AUDIO_CONFIG = _load_audio_config()
 
+# T1.6: the capture helpers live in jarvis/device_setup.py; these constants are
+# passed in so the module does not depend on main's tuning block.
+from jarvis import device_setup as _device_setup
+
+_CAPTURE = _device_setup.CaptureSpec(
+    format=FORMAT,
+    channels=CHANNELS,
+    rate=SEND_SAMPLE_RATE,
+    chunk=CHUNK_SIZE,
+    dead_peak=MIC_DEAD_PEAK,
+    alive_peak=MIC_ALIVE_PEAK,
+    bad_peak=MIC_BAD_PEAK,
+    virtual_hints=_VIRTUAL_HINTS,
+)
+
 
 def _device_peak(pa, index: int, seconds: float = 0.6) -> int:
-    """Peak sample magnitude captured from `index` (-1 if unusable).
-
-    Returns -1 not just when the device will not open, but also when the stream
-    is clearly broken: some host-API copies (e.g. a DirectSound path on this
-    machine's Realtek array) hand back far more samples than were requested, or
-    sit pinned at full scale. Either would otherwise look like the *loudest*
-    microphone and be chosen.
-    """
-    try:
-        stream = pa.open(
-            format=FORMAT, channels=CHANNELS, rate=SEND_SAMPLE_RATE,
-            input=True, input_device_index=index,
-            frames_per_buffer=CHUNK_SIZE,
-        )
-    except Exception:
-        return -1
-    peak = 0
-    broken = False
-    try:
-        t0 = time.time()
-        while time.time() - t0 < seconds:
-            data = stream.read(CHUNK_SIZE, exception_on_overflow=False)
-            s = np.frombuffer(data, dtype=np.int16)
-            if s.size > CHUNK_SIZE:      # host returned more than we asked for
-                broken = True
-                break
-            if s.size:
-                peak = max(peak, int(np.abs(s).max()))
-    except Exception:
-        return -1
-    finally:
-        try:
-            stream.close()
-        except Exception:
-            pass
-    if broken or peak >= MIC_BAD_PEAK:
-        return -1
-    return peak
+    """Peak sample magnitude captured from `index` (-1 if unusable)."""
+    return _device_setup.device_peak(pa, index, _CAPTURE, seconds)
 
 
 def _pick_input_device():
@@ -354,104 +330,14 @@ def _pick_input_device():
     Preference: config/audio.json -> system default if it captures sound ->
     liveliest real input device -> system default.
     """
-    pref = AUDIO_CONFIG.get("input_device")
-
-    try:
-        pa = audio.open_pyaudio()
-    except Exception:
-        return None
-
-    try:
-        # Real capture devices only, de-duplicated across host APIs, skipping
-        # virtual/loopback endpoints that are not microphones. The same physical
-        # mic is enumerated once per host API (MME/DirectSound/WASAPI); MME
-        # truncates names at 31 characters, so the names do not compare equal.
-        # Match on a 28-char prefix and keep the MME copy (hostApi 0), which is
-        # the most compatible and, on this machine, the only working one.
-        candidates = []
-        for i in range(pa.get_device_count()):
-            try:
-                d = pa.get_device_info_by_index(i)
-            except Exception:
-                continue
-            name = str(d.get("name", ""))
-            low  = name.lower()
-            if not d.get("maxInputChannels") or any(h in low for h in _VIRTUAL_HINTS):
-                continue
-            candidates.append((i, name, int(d.get("hostApi", 99))))
-
-        candidates.sort(key=lambda t: (t[2], t[0]))     # MME first, then index
-        inputs, seen = [], set()
-        for i, name, _api in candidates:
-            key = name.lower()[:28]
-            if key in seen:
-                continue
-            seen.add(key)
-            inputs.append((i, name))
-
-        if isinstance(pref, int):
-            print(f"[JARVIS] 🎙️ Input device (from config): [{pref}]")
-            return pref
-        if isinstance(pref, str) and pref.strip():
-            needle = pref.strip().lower()
-            for i, nm in inputs:
-                if needle in nm.lower():
-                    print(f"[JARVIS] 🎙️ Input device (from config): [{i}] {nm}")
-                    return i
-            print(f"[JARVIS] ⚠️ config input_device '{pref}' not found — auto-detecting")
-
-        try:
-            default_index = pa.get_default_input_device_info()["index"]
-        except Exception:
-            default_index = None
-
-        default_name = next((nm for i, nm in inputs if i == default_index), "system default")
-        if default_index is not None:
-            p = _device_peak(pa, default_index)
-            print(f"[JARVIS] 🎙️ Default input [{default_index}] {default_name} "
-                  f"peak={p}")
-            if p >= MIC_DEAD_PEAK:
-                return default_index
-            print("[JARVIS] ⚠️ Default microphone appears silent "
-                  "(3.5mm jack with nothing plugged in?) — searching for a live mic")
-
-        best, best_peak, best_name = None, -1, ""
-        for i, nm in inputs:
-            if i == default_index:
-                continue
-            p = _device_peak(pa, i)
-            if p > best_peak:
-                best, best_peak, best_name = i, p, nm
-            if p >= MIC_ALIVE_PEAK:
-                break
-
-        if best is not None and best_peak > 0:
-            if best_peak >= MIC_DEAD_PEAK:
-                print(f"[JARVIS] 🎙️ Using input [{best}] {best_name}  (peak={best_peak})")
-            else:
-                print(f"[JARVIS] ⚠️ Every microphone looks quiet — using the "
-                      f"best, [{best}] {best_name} (peak={best_peak}); check the "
-                      f"Windows mic level or mute if JARVIS cannot hear you")
-            return best
-
-        print("[JARVIS] ⚠️ No microphone produced any signal — using system default")
-        return None
-    finally:
-        audio.close(pa)
+    return _device_setup.pick_input_device(
+        AUDIO_CONFIG, _CAPTURE, audio, printer=print
+    )
 
 
 def _device_name(index) -> str:
     """Friendly name of a PyAudio input device index ('' if unknown)."""
-    if index is None:
-        return ""
-    try:
-        pa = audio.open_pyaudio()
-        try:
-            return str(pa.get_device_info_by_index(index).get("name", ""))
-        finally:
-            audio.close(pa)
-    except Exception:
-        return ""
+    return _device_setup.device_name(index, audio)
 
 
 def _apply_mic_level(device_name: str, level: float) -> None:
@@ -462,16 +348,7 @@ def _apply_mic_level(device_name: str, level: float) -> None:
     enough for a VAD to read it as speech. Only applied when config/audio.json
     sets "mic_level", so JARVIS never changes system audio on its own.
     """
-    try:
-        from core import platform as platform_adapter
-
-        if platform_adapter.set_mic_level(device_name, level):
-            print(f"[JARVIS] 🔉 Mic level -> {level:.2f} on {device_name}")
-        else:
-            print(f"[JARVIS] ⚠️ could not set mic level for '{device_name}' "
-                  f"(unsupported platform or device not found)")
-    except Exception as e:
-        print(f"[JARVIS] ⚠️ could not set mic level: {e}")
+    _device_setup.apply_mic_level(device_name, level, printer=print)
 
 # --- cognitive / character tuning (Live model) -------------------------------
 # These shape how JARVIS thinks and answers, not just what he says.
