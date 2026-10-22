@@ -1,0 +1,4 @@
+{
+  "max_chars": 0,
+  "_comment": "I4: 0 keeps the full system prompt. Set a positive number to trim the assembled prompt for small-context fallback models."
+}

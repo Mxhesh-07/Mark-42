@@ -627,6 +627,29 @@ def get_client():
         return _client
 
 
+def _intent_text(contents: Any) -> str:
+    """Best-effort plain text of a request, for the I3 router.
+
+    `generate()` receives either a string or the SDK's content objects. Only
+    string content is classified; anything else returns "" and the router keeps
+    the existing chain order (standard). Classification must never be the thing
+    that breaks a call.
+    """
+    if isinstance(contents, str):
+        return contents
+    if isinstance(contents, (list, tuple)):
+        parts = []
+        for item in contents:
+            if isinstance(item, str):
+                parts.append(item)
+            else:
+                text = getattr(item, "text", None)
+                if isinstance(text, str):
+                    parts.append(text)
+        return "\n".join(parts)
+    return ""
+
+
 def generate(contents: Any, *, models: Optional[Sequence[str]] = None,
              config: Any = None, system_instruction: Optional[str] = None,
              json_mode: bool = False) -> Any:
@@ -641,7 +664,17 @@ def generate(contents: Any, *, models: Optional[Sequence[str]] = None,
         config = types.GenerateContentConfig(**kw)
 
     client = get_client()
-    chain = tuple(models) if models else None
+    if models:
+        chain: tuple[str, ...] = tuple(models)
+    else:
+        # I3: reorder the standard chain by intent. Same set of models, so the
+        # fallback guarantees are unchanged; only the first attempt differs.
+        try:
+            from agent import routing
+
+            chain = tuple(routing.order(_chain, _intent_text(contents)))
+        except Exception:
+            chain = tuple(_chain)
     requested = chain[0] if chain else None
     contents = _clean(contents)
     return _run(

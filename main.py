@@ -511,6 +511,34 @@ def _get_api_key() -> str:
     with open(API_CONFIG_PATH, "r", encoding="utf-8") as f:
         return json.load(f)["gemini_api_key"]
 
+def _apply_prompt_budget(prompt: str) -> str:
+    """I4: optional compact variant for small-context models.
+
+    Disabled by default (max_chars 0) so the full prompt is unchanged. Set
+    `config/prompt_budget.json` -> {"max_chars": N} or the environment variable
+    JARVIS_PROMPT_MAX_CHARS to trim the assembled instruction to fit a smaller
+    context window. The original is returned on any error.
+    """
+    try:
+        limit = int(os.environ.get("JARVIS_PROMPT_MAX_CHARS", "0") or 0)
+    except ValueError:
+        limit = 0
+    if not limit:
+        try:
+            with open(BASE_DIR / "config" / "prompt_budget.json", "r", encoding="utf-8") as f:
+                limit = int(json.load(f).get("max_chars", 0) or 0)
+        except Exception:
+            limit = 0
+    if limit <= 0 or len(prompt) <= limit:
+        return prompt
+    try:
+        from agent import routing
+
+        return routing.compact(prompt, limit=limit)
+    except Exception:
+        return prompt
+
+
 def _load_system_prompt() -> str:
     try:
         return PROMPT_PATH.read_text(encoding="utf-8")
@@ -1449,6 +1477,9 @@ class JarvisLive:
                 )
             )
         cognition_kwargs["temperature"] = LIVE_TEMPERATURE
+
+        # I4: optional compact variant for small-context fallbacks (default off).
+        sys_prompt = _apply_prompt_budget(sys_prompt)
 
         return types.LiveConnectConfig(
             response_modalities=["AUDIO"],
