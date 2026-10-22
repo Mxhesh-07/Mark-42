@@ -51,10 +51,7 @@ def show(root, *, ms: int = 900, version: str = "", colors: dict | None = None):
 def shutdown_steps() -> list[str]:
     """The order shutdown happens in. Useful for logs and tests."""
     return [
-        "stop initiative",
         "stop task queue",
-        "stop monitors",
-        "close browser",
         "clear recording indicator",
         "save window layout",
         "exit",
@@ -62,15 +59,13 @@ def shutdown_steps() -> list[str]:
 
 
 def shutdown(ui=None, *, save_layout: bool = True) -> list[str]:
-    """Run the composed shutdown. Each step is independent and best-effort."""
+    """Run the composed shutdown. Each step is independent and best-effort.
+
+    Deliberately does not engage the kill switch: shutting down is not a policy
+    decision, and leaving AUTONOMY_OFF behind would block the next start.
+    """
     done: list[str] = []
     if ui is not None:
-        try:
-            from ui import support
-            support.engage_kill("shutdown")
-            done.append("stop initiative")
-        except Exception:
-            pass
         try:
             from agent import task_queue
             task_queue.get_queue().stop()

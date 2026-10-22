@@ -65,10 +65,31 @@ def palette(name: str | None = None) -> dict:
     return dict(THEMES.get(name or configured_name(), THEMES[DEFAULT_THEME]))
 
 
+_SCALE: float | None = None
+
+
+def _scale() -> float:
+    global _SCALE
+    if _SCALE is not None:
+        return _SCALE
+    value = 1.0
+    try:
+        raw = json.loads(CONFIG.read_text(encoding="utf-8")).get("font_scale", 1.0)
+        value = max(0.8, min(2.0, float(raw)))
+    except Exception:
+        value = 1.0
+    _SCALE = value
+    return value
+
+
 def font(size: int = 10, *, bold: bool = False, family: str | None = None) -> tuple:
-    """One tuple shape for Tk widgets: (family, size[, "bold"])."""
+    """One tuple shape for Tk widgets: (family, size[, "bold"]).
+
+    T3.14: `font_scale` in config/ui.json enlarges every call site at once.
+    """
     fam = family or DEFAULT_FAMILY
-    return (fam, int(size), "bold") if bold else (fam, int(size))
+    px = max(7, int(round(int(size) * _scale())))
+    return (fam, px, "bold") if bold else (fam, px)
 
 
 def save_theme(name: str) -> bool:

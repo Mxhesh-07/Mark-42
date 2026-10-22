@@ -275,12 +275,16 @@ class JarvisUI:
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
     def _on_close(self):
-        """T3.18: persist layout, then exit. Save errors never block closing."""
+        """T3.18/T3.23: composed shutdown, then exit. Errors never block closing."""
         try:
-            from ui.layout import save_window
-            save_window(self.root)
+            from ui import splash
+            splash.shutdown(self)
         except Exception:
-            pass
+            try:
+                from ui.layout import save_window
+                save_window(self.root)
+            except Exception:
+                pass
         try:
             os._exit(0)
         except Exception:
@@ -585,6 +589,11 @@ class JarvisUI:
     def start_speaking(self):
         self.speaking    = True
         self.status_text = "SPEAKING"
+        try:
+            from ui import cues
+            cues.play("speaking")
+        except Exception:
+            pass
 
     def stop_speaking(self):
         self.speaking    = False

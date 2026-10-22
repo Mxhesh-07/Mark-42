@@ -2723,6 +2723,14 @@ class JarvisLive:
 def main():
     ui = JarvisUI("face.png")
 
+    # T3.23: a short drawn splash; it never blocks startup and removes itself.
+    try:
+        from agent.version import version as _version
+        from ui import splash as _splash
+        _splash.show(ui.root, ms=900, version=_version())
+    except Exception:
+        pass
+
     ui.set_tasks([
         "✓ Listen",
         "✓ Understand",
