@@ -23,3 +23,4 @@ Short records of the decisions that are expensive to reverse. Newest last.
 | [0017](0017-budget-is-a-floor.md) | A spend cap is a floor on the degradation ladder, not a step down it |
 | [0018](0018-subject-controls.md) | "Forget everything about me" means every store, and the receipt proves it |
 | [0019](0019-the-build-describes-itself.md) | The build describes itself, and the release is checked |
+| [0020](0020-entry-point-is-a-composition-point.md) | The entry point composes; the schema, config and dispatcher live in modules |
