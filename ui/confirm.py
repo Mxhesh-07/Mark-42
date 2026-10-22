@@ -233,6 +233,12 @@ def _show_tk(panel: dict, done) -> None:
 def _build(root, panel: dict, done) -> None:
     import tkinter as tk
 
+    try:
+        from ui import cues
+        cues.play("confirm")
+    except Exception:
+        pass
+
     window = tk.Toplevel(root)
     window.title("JARVIS needs your OK")
     window.attributes("-topmost", True)

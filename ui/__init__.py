@@ -589,6 +589,13 @@ class JarvisUI:
         self.status_text = ("PROCESSING" if tl.startswith("you:")
                             else "RESPONDING" if tl.startswith("ai:")
                             else self.status_text)
+        # T3.22: optional cue; a user turn is the "listening is over" moment.
+        if tl.startswith("you:"):
+            try:
+                from ui import cues
+                cues.play("listening")
+            except Exception:
+                pass
         if not self.is_typing:
             self._start_typing()
 
@@ -1170,6 +1177,11 @@ class JarvisUI:
             ts  = time.strftime("%H:%M:%S")
             if kind == "tool":
                 self._think_insert("tool", f"[{ts}] ▸ {self._clip(one, 170)}")
+                try:
+                    from ui import cues
+                    cues.play("thinking")
+                except Exception:
+                    pass
             elif kind == "args":
                 # raw detail — hidden while the pane is in STEPS mode
                 self._think_insert("raw", f"        {self._clip(one, 500)}")
@@ -1183,6 +1195,11 @@ class JarvisUI:
                 self._think_insert("err", f"[{ts}] ✕ {self._clip(one, 250)}")
                 if len(one) > 250:
                     self._think_insert("raw", f"        {self._clip(one, 4000)}")
+                try:
+                    from ui import cues
+                    cues.play("error")
+                except Exception:
+                    pass
             else:
                 self._think_insert("sys", f"[{ts}] {self._clip(one, 170)}")
         except Exception:

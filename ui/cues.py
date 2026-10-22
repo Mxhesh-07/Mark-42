@@ -38,8 +38,21 @@ def play(kind: str, *, force: bool = False) -> bool:
     freq, ms = _CUES[kind]
     try:
         import winsound
+    except Exception:
+        return False
 
-        winsound.Beep(freq, ms)
+    def _beep() -> None:
+        try:
+            winsound.Beep(freq, ms)
+        except Exception:
+            pass
+
+    try:
+        # T3.22: a cue must never stall the paint loop; Beep blocks for its
+        # duration, so it runs off the Tk thread.
+        import threading
+
+        threading.Thread(target=_beep, daemon=True, name="Cue").start()
         return True
     except Exception:
         return False
