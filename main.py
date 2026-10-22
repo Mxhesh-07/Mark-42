@@ -2,6 +2,7 @@ import asyncio
 import threading
 import json
 import os
+import random
 import re
 import sys
 import traceback
@@ -2438,7 +2439,20 @@ class JarvisLive:
                 async for response in turn:
 
                     if response.data:
-                        self.audio_in_queue.put_nowait(response.data)
+                        # B6: drop the oldest audio chunk rather than raise when
+                        # the speaker side is behind; speech degrades gracefully,
+                        # an exception here would kill the session.
+                        try:
+                            self.audio_in_queue.put_nowait(response.data)
+                        except asyncio.QueueFull:
+                            try:
+                                self.audio_in_queue.get_nowait()
+                            except asyncio.QueueEmpty:
+                                pass
+                            try:
+                                self.audio_in_queue.put_nowait(response.data)
+                            except asyncio.QueueFull:
+                                pass
                         last_activity = time.time()
 
                     if response.server_content:
@@ -2617,15 +2631,21 @@ class JarvisLive:
             http_options={"api_version": "v1beta"}
         )
 
+        reconnect_attempts = 0
+
         while True:
             try:
                 print("[JARVIS] 🔌 Connecting...")
                 config = self._build_config()
 
                 async with client.aio.live.connect(model=LIVE_MODEL, config=config) as session:
+                    reconnect_attempts = 0
                     self.session        = session
                     self._loop          = asyncio.get_event_loop() 
-                    self.audio_in_queue = asyncio.Queue()
+                    # B6: bounded queues. Speaker-out already drops oldest on
+                    # overflow (see the put loop); mic-in is bounded here too so
+                    # a slow consumer cannot grow memory without limit.
+                    self.audio_in_queue = asyncio.Queue(maxsize=50)
                     self.out_queue      = asyncio.Queue(maxsize=10)
 
                     print("[JARVIS] ✅ Connected.")
@@ -2700,8 +2720,15 @@ class JarvisLive:
                 self.ui.jarvis_think("err", f"connection: {e}")
                 traceback.print_exc()
 
-            print("[JARVIS] 🔄 Reconnecting in 3s...")
-            await asyncio.sleep(3)
+            print("[JARVIS] 🔄 Reconnecting...")
+            # B5: exponential backoff with a cap, so a dead network is not hit
+            # every three seconds forever. The delay resets after a successful
+            # connection (see reconnect_attempts = 0 above).
+            reconnect_attempts = min(reconnect_attempts + 1, 6)
+            delay = min(60.0, 3.0 * (2 ** (reconnect_attempts - 1)))
+            delay += random.uniform(0, 1.5)
+            print(f"[JARVIS]    retry {reconnect_attempts} in {delay:.1f}s")
+            await asyncio.sleep(delay)
 
 def main():
     ui = JarvisUI("face.png")
