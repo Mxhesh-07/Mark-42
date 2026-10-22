@@ -231,10 +231,22 @@ class JarvisUI:
         hdr.pack_propagate(False)
         tk.Label(hdr, text="◈ THINKING", fg=C_PRI, bg="#00080d",
                  font=_font(10, bold=True)).pack(side="left", padx=(9, 0))
-        tk.Button(hdr, text="⌫", command=self._clear_thinking, fg=C_MID,
-                  bg="#00080d", activebackground="#003344", font=_font(9),
-                  bd=0, relief="flat", padx=7, cursor="hand2"
-                  ).pack(side="right", padx=(0, 5))
+        clear_btn = tk.Button(hdr, command=self._clear_thinking, fg=C_MID,
+                              bg="#00080d", activebackground="#003344",
+                              font=_font(9), bd=0, relief="flat", padx=7,
+                              cursor="hand2")
+        # T3.25: a drawn icon, not the "⌫" glyph some fonts render as a box.
+        try:
+            from ui.icons import tk_icon
+            image = tk_icon(self.root, "backspace", 16, C_MID)
+            if image is not None:
+                clear_btn.config(image=image)
+                clear_btn.image = image
+            else:
+                clear_btn.config(text="⌫")
+        except Exception:
+            clear_btn.config(text="⌫")
+        clear_btn.pack(side="right", padx=(0, 5))
         self.think_mode_btn = tk.Button(
             hdr, text="STEPS", command=self._toggle_think_mode,
             fg=C_ACC2, bg="#00080d", activebackground="#003344",
@@ -280,6 +292,7 @@ class JarvisUI:
             self.root.bind("<Control-Shift-M>", lambda _e: self.minimize_window())
             self.root.bind("<Control-k>", lambda _e: self.open_composer())
             self.root.bind("<Control-h>", lambda _e: self.open_transcript())
+            self.root.bind("<Control-c>", lambda _e: self.copy_selection())
             # T3.14: Escape closes transient windows, so the HUD is usable
             # without a mouse.
             self.root.bind("<Escape>", lambda _e: self._close_transient())
@@ -960,6 +973,39 @@ class JarvisUI:
         self.jarvis_think("sys", summary)
         for line in lines:
             self.jarvis_think("notify", line)
+
+    def copy_selection(self) -> str:
+        """T3.28: copy selected text from the focused widget or a log pane.
+
+        The log/thinking panes are read-only Text widgets; selection still works,
+        but without this binding there is no clipboard path on Windows.
+        """
+        widgets = []
+        try:
+            focused = self.root.focus_get()
+            if focused is not None:
+                widgets.append(focused)
+        except Exception:
+            pass
+        widgets.extend([getattr(self, "log_text", None),
+                        getattr(self, "think_text", None)])
+        for widget in widgets:
+            if widget is None:
+                continue
+            try:
+                text = widget.get("sel.first", "sel.last")
+            except Exception:
+                continue
+            if not text:
+                continue
+            try:
+                self.root.clipboard_clear()
+                self.root.clipboard_append(text)
+                self.jarvis_think("sys", f"copied {len(text)} chars")
+            except Exception:
+                pass
+            return text
+        return ""
 
     def _close_transient(self) -> None:
         """T3.14: Escape closes any Toplevel we opened, not the HUD."""

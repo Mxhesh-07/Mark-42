@@ -71,6 +71,39 @@ def build(ui) -> tk.Toplevel:
               bg=colors["panel"], fg=colors["pri"], font=theme.font(9),
               relief="flat", cursor="hand2").pack(side="left", padx=8)
 
+    # --- hologram (T3.20) ---
+    try:
+        from ui import hologram_control
+        models = hologram_control.models()
+        holo_row = tk.Frame(win, bg=colors["bg"])
+        holo_row.pack(anchor="w", padx=14, pady=(4, 2))
+        tk.Label(holo_row, text="Hologram", fg=colors["text"], bg=colors["bg"],
+                 font=theme.font(9)).pack(side="left")
+        holo_choice = tk.StringVar(value=models[0] if models else "")
+        holo_menu = tk.OptionMenu(holo_row, holo_choice, *(models or [""]))
+        holo_menu.configure(bg=colors["panel"], fg=colors["text"],
+                           activebackground=colors["dim"], font=theme.font(9),
+                           highlightthickness=0)
+        holo_menu.pack(side="left", padx=8)
+        tk.Label(win, text=hologram_control.status_line(), fg=colors["dim"],
+                 bg=colors["bg"], font=theme.font(8)).pack(anchor="w", padx=14)
+
+        def _launch() -> None:
+            name = holo_choice.get()
+            if name:
+                ui.hologram_launch(name)
+
+        holo_buttons = tk.Frame(win, bg=colors["bg"])
+        holo_buttons.pack(anchor="w", padx=14, pady=(2, 8))
+        tk.Button(holo_buttons, text="Launch", command=_launch,
+                  bg=colors["panel"], fg=colors["pri"], font=theme.font(9),
+                  relief="flat", cursor="hand2").pack(side="left")
+        tk.Button(holo_buttons, text="Close", command=ui.hologram_close,
+                  bg=colors["panel"], fg=colors["text"], font=theme.font(9),
+                  relief="flat", cursor="hand2").pack(side="left", padx=8)
+    except Exception:
+        pass
+
     # --- status (read only) ---
     status = tk.Label(win, text=support.status_text(), fg=colors["dim"],
                       bg=colors["bg"], font=theme.font(8), justify="left",

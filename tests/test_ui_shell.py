@@ -75,6 +75,47 @@ def test_setup_saves_a_key_atomically_and_refuses_an_empty_one(tmp_path, monkeyp
     assert saved["gemini_api_key"] == "k" * 40
 
 
+def test_copy_selection_uses_the_clipboard_and_ignores_empty_selection():
+    import ui
+
+    class FakeWidget:
+        def __init__(self, selection):
+            self.selection = selection
+
+        def get(self, _start, _end=None):
+            if self.selection is None:
+                raise Exception("no selection")
+            return self.selection
+
+    class FakeRoot:
+        def __init__(self):
+            self.clipboard_value = None
+
+        def focus_get(self):
+            return None
+
+        def clipboard_clear(self):
+            self.clipboard_value = ""
+
+        def clipboard_append(self, text):
+            self.clipboard_value = text
+
+    class FakeUI:
+        def __init__(self, selection):
+            self.root = FakeRoot()
+            self.log_text = FakeWidget(selection)
+            self.think_text = FakeWidget(None)
+            self.messages = []
+
+        def jarvis_think(self, kind, text):
+            self.messages.append((kind, text))
+
+    fake = FakeUI("hello")
+    assert ui.JarvisUI.copy_selection(fake) == "hello"
+    assert fake.root.clipboard_value == "hello"
+    assert ui.JarvisUI.copy_selection(FakeUI(None)) == ""
+
+
 def test_opacity_is_clamped():
     class FakeRoot:
         def __init__(self):
