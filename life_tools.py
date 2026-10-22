@@ -408,6 +408,19 @@ def _summarize_text(text: str) -> dict:
 
 @_locked
 def start_meeting_recording(title: str) -> dict:
+    try:
+        from agent import recording
+
+        if not recording.require_consent():
+            try:
+                from agent import audit
+
+                audit.record("recording_blocked_no_consent", title=(title or "Meeting"))
+            except Exception:
+                pass
+            return {"status": "blocked", "reason": "consent_required", "message": "Recording consent required. Call grant_consent() first."}
+    except Exception:
+        pass
     data = _load_data()
     active = {
         "title": (title or "Meeting").strip(),
@@ -415,6 +428,18 @@ def start_meeting_recording(title: str) -> dict:
     }
     data["active_recording"] = active
     _save_data(data)
+    try:
+        from ui import JarvisUI
+
+        JarvisUI.set_recording(True, reason="meeting_start")
+    except Exception:
+        pass
+    try:
+        from agent import audit
+
+        audit.record("meeting_recording_started", title=active["title"])
+    except Exception:
+        pass
     return {"status": "recording", **active}
 
 
@@ -437,6 +462,18 @@ def stop_meeting_recording(transcript: str = "") -> dict:
     data["recordings"].append(rec)
     data["active_recording"] = None
     _save_data(data)
+    try:
+        from ui import JarvisUI
+
+        JarvisUI.set_recording(False, reason="meeting_stop")
+    except Exception:
+        pass
+    try:
+        from agent import audit
+
+        audit.record("meeting_recording_stopped", title=rec.get("title"), has_transcript=bool(rec.get("transcript")))
+    except Exception:
+        pass
     return {"status": "stopped", **rec}
 
 

@@ -56,6 +56,28 @@ def jarvis_think(kind: str, text: str) -> None:
 
 
 class JarvisUI:
+    _recording = False
+
+    @classmethod
+    def set_recording(cls, on: bool, reason: str = ""):
+        cls._recording = bool(on)
+        try:
+            from agent import audit
+
+            audit.record("recording_state", enabled=cls._recording, detail=reason)
+        except Exception:
+            pass
+
+    @classmethod
+    def recording_indicator(cls):
+        try:
+            from agent import recording
+
+            ind = recording.indicator()
+            ind["recording"] = cls._recording
+            return ind
+        except Exception:
+            return {"recording": cls._recording, "consented": False, "visible": True}
     def __init__(self, face_path, size=None):
         global _ACTIVE_UI
         _ACTIVE_UI = self
