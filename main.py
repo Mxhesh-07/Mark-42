@@ -571,119 +571,27 @@ class JarvisLive:
          )
     
     def _build_config(self) -> types.LiveConnectConfig:
-        from datetime import datetime 
+        """T1.6: prompt composition and config live in jarvis/live_config.py."""
+        from jarvis import live_config
 
-        memory  = load_memory()
-        mem_str = format_memory_for_prompt(memory)
-
-        sys_prompt = _load_system_prompt()
-
-        try:
-            with open(
-                BASE_DIR / "prompts" / "jarvis_personality.txt",
-                "r",
-                encoding="utf-8"
-            ) as f:
-                personality_prompt = f.read()
-        except Exception:
-            personality_prompt = ""
-
-        sys_prompt = personality_prompt + "\n\n" + sys_prompt
-
-        now      = datetime.now()
-        time_str = now.strftime("%A, %B %d, %Y — %I:%M %p")
-        time_ctx = (
-            f"[CURRENT DATE & TIME]\n"
-            f"Right now it is: {time_str}\n"
-            f"Use this to calculate exact times for reminders. "
-            f"If user says 'in 2 minutes', add 2 minutes to this time.\n\n"
-        )
-
-        if mem_str:
-            sys_prompt = time_ctx + mem_str + "\n\n" + sys_prompt
-        else:
-            sys_prompt = time_ctx + sys_prompt
-
-        # Snapshot of what is already open, so JARVIS continues in existing
-        # windows instead of opening duplicates.
-        try:
-            state_str = _describe_state(max_windows=10, max_apps=10)
-        except Exception:
-            state_str = ""
-        if state_str:
-            sys_prompt = (
-                "[CURRENTLY OPEN ON THE COMPUTER — continue in these windows "
-                "instead of opening duplicates; call get_open_windows for a "
-                "fresh list]\n" + state_str + "\n\n" + sys_prompt
-            )
-
-        # W3: the self-model. JARVIS reports its own mode, confidence and limits
-        # honestly instead of guessing what it can do.
-        try:
-            from core import self as _self_model
-            _self_block = _self_model.prompt_block()
-        except Exception:
-            _self_block = ""
-        if _self_block:
-            sys_prompt = _self_block + "\n\n" + sys_prompt
-
-        # Automatic-VAD tuning (see VAD_* constants). Only raise the
-        # end-of-turn silence window; prefix padding and longer windows were
-        # measured to hurt short utterances, so they are deliberately unused.
-        vad_kwargs = {}
-        if VAD_TUNING:
-            aad = {"silence_duration_ms": VAD_SILENCE_MS}
-            if VAD_START_SENS:
-                aad["start_of_speech_sensitivity"] = (
-                    types.StartSensitivity.START_SENSITIVITY_HIGH
-                )
-            if VAD_END_SENS:
-                aad["end_of_speech_sensitivity"] = (
-                    types.EndSensitivity.END_SENSITIVITY_HIGH
-                )
-            vad_kwargs["realtime_input_config"] = types.RealtimeInputConfig(
-                automatic_activity_detection=types.AutomaticActivityDetection(**aad)
-            )
-
-        # Cognitive settings (see THINKING_BUDGET / AFFECTIVE_DIALOG / CTX_*).
-        # 'proactivity' is intentionally absent — this model rejects the field.
-        cognition_kwargs = {}
-        if THINKING_BUDGET and THINKING_BUDGET > 0:
-            cognition_kwargs["thinking_config"] = types.ThinkingConfig(
-                thinking_budget=THINKING_BUDGET
-            )
-        if AFFECTIVE_DIALOG:
-            cognition_kwargs["enable_affective_dialog"] = True
-        if CTX_TRIGGER_TOKENS and CTX_TARGET_TOKENS:
-            cognition_kwargs["context_window_compression"] = (
-                types.ContextWindowCompressionConfig(
-                    trigger_tokens=CTX_TRIGGER_TOKENS,
-                    sliding_window=types.SlidingWindow(
-                        target_tokens=CTX_TARGET_TOKENS
-                    ),
-                )
-            )
-        cognition_kwargs["temperature"] = LIVE_TEMPERATURE
-
-        # I4: optional compact variant for small-context fallbacks (default off).
-        sys_prompt = _apply_prompt_budget(sys_prompt)
-
-        return types.LiveConnectConfig(
-            response_modalities=["AUDIO"],
-            output_audio_transcription={},
-            input_audio_transcription={},
-            system_instruction=sys_prompt,
-            tools=[{"function_declarations": TOOL_DECLARATIONS}],
-            session_resumption=types.SessionResumptionConfig(),
-            **vad_kwargs,
-            **cognition_kwargs,
-            speech_config=types.SpeechConfig(
-                voice_config=types.VoiceConfig(
-                    prebuilt_voice_config=types.PrebuiltVoiceConfig(
-                        voice_name="Charon" 
-                    )
-                )
-            ),
+        memory = load_memory()
+        return live_config.build_config(
+            types=types,
+            base_dir=BASE_DIR,
+            memory_text=format_memory_for_prompt(memory),
+            load_system_prompt=_load_system_prompt,
+            describe_state=_describe_state,
+            prompt_budget=_apply_prompt_budget,
+            tool_declarations=TOOL_DECLARATIONS,
+            vad_tuning=VAD_TUNING,
+            vad_silence_ms=VAD_SILENCE_MS,
+            vad_start_sens=VAD_START_SENS,
+            vad_end_sens=VAD_END_SENS,
+            thinking_budget=THINKING_BUDGET,
+            affective_dialog=AFFECTIVE_DIALOG,
+            ctx_trigger=CTX_TRIGGER_TOKENS,
+            ctx_target=CTX_TARGET_TOKENS,
+            temperature=LIVE_TEMPERATURE,
         )
 
     async def _execute_tool(self, fc) -> types.FunctionResponse:
