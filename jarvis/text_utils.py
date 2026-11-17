@@ -42,3 +42,30 @@ def owner_name() -> str:
     except Exception:
         pass
     return "Owner"
+
+
+def model_facing_result(tool: str, result):
+    """Tag third-party content as data before the model reads it.
+
+    Tools such as ``web_search``, ``browser_control`` and screen OCR return text
+    written by strangers. Handing that straight to the model lets a page ask it
+    to run a command, so it is wrapped in markers the content cannot forge.
+    Tools that return our own text pass through untouched.
+    """
+    try:
+        if result is None or result == "":
+            return ""
+        from agent import untrusted
+
+        return untrusted.observation(tool, result)
+    except Exception:
+        return result
+
+
+def no_result(tool: str) -> str:
+    """Say an action produced nothing instead of inventing a success.
+
+    Several dispatch branches used to turn an empty return into "Done." or
+    "completed", which the model then reported as fact.
+    """
+    return f"{tool} returned no result; completion not confirmed."

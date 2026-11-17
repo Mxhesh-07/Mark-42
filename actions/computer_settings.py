@@ -1,3 +1,4 @@
+from agent import secrets_store
 # actions/computer_settings.py
 # MARK XXV — Computer Settings & UI Controls
 #
@@ -36,12 +37,12 @@ def get_base_dir() -> Path:
     return Path(__file__).resolve().parent.parent
 
 BASE_DIR        = get_base_dir()
-API_CONFIG_PATH = BASE_DIR / "config" / "api_keys.json"
+# API_CONFIG_PATH managed by secrets_store
+# API_CONFIG_PATH = BASE_DIR / "config" / "api_keys.json"
 
 import json
 def _get_api_key() -> str:
-    with open(API_CONFIG_PATH, "r", encoding="utf-8") as f:
-        return json.load(f)["gemini_api_key"]
+    return secrets_store.get_key("gemini_api_key")
 
 
 def volume_up():
@@ -668,6 +669,6 @@ def computer_settings(
 
     try:
         func()
-        return f"Done: {action}."
+        return f"{action}: requested; no confirmation available."
     except Exception as e:
         return f"Action failed ({action}): {e}"

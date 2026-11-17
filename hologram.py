@@ -48,17 +48,19 @@ PID_FILE   = CONFIG_DIR / "hologram.pid"
 
 # ---- OpenGL colours (0..1) ------------------------------------------------
 COLORS = {
-    "cyan":  (0.00, 0.65, 0.95),
-    "amber": (1.00, 0.50, 0.00),
-    "white": (0.85, 1.00, 1.00),
-    "red":   (1.00, 0.22, 0.15),
-    "green": (0.20, 1.00, 0.45),
-    "blue":  (0.25, 0.50, 1.00),
-    "gray":  (0.62, 0.72, 0.82),
-    "gold":  (1.00, 0.80, 0.20),
-    "violet":(0.70, 0.35, 1.00),
+    "cyan":  (0.06, 0.55, 0.78),
+    "amber": (0.72, 0.36, 0.04),
+    "white": (0.72, 0.90, 1.00),
+    "red":   (0.55, 0.12, 0.10),
+    "green": (0.08, 0.58, 0.24),
+    "blue":  (0.10, 0.28, 0.68),
+    "gray":  (0.22, 0.29, 0.36),
+    "gunmetal": (0.09, 0.13, 0.17),
+    "steel": (0.26, 0.34, 0.42),
+    "gold":  (0.72, 0.50, 0.10),
+    "violet":(0.42, 0.20, 0.68),
 }
-HOT = (0.85, 1.00, 1.00)
+HOT = (0.35, 1.00, 1.00)
 
 # ---- HUD colours (pygame RGB) --------------------------------------------
 H_CYAN, H_AMBER, H_DIM, H_WHITE, H_BORDER = \
@@ -70,27 +72,38 @@ def _norm(v):
     return (v[0] / L, v[1] / L, v[2] / L)
 
 
+def _sub(a, b):
+    return (a[0] - b[0], a[1] - b[1], a[2] - b[2])
+
+
+def _cross(a, b):
+    return (a[1] * b[2] - a[2] * b[1],
+            a[2] * b[0] - a[0] * b[2],
+            a[0] * b[1] - a[1] * b[0])
+
+
 # --------------------------------------------------------------------------
-#  Primitive geometry (immediate-mode GL)
+#  Primitive geometry (immediate-mode GL, with normals for smooth shading)
 # --------------------------------------------------------------------------
 def _box(sx, sy, sz):
     hx, hy, hz = sx * 0.5, sy * 0.5, sz * 0.5
     faces = [
-        ((-hx, -hy,  hz), ( hx, -hy,  hz), ( hx,  hy,  hz), (-hx,  hy,  hz)),
-        (( hx, -hy, -hz), (-hx, -hy, -hz), (-hx,  hy, -hz), ( hx,  hy, -hz)),
-        (( hx, -hy,  hz), ( hx, -hy, -hz), ( hx,  hy, -hz), ( hx,  hy,  hz)),
-        ((-hx, -hy, -hz), (-hx, -hy,  hz), (-hx,  hy,  hz), (-hx,  hy, -hz)),
-        ((-hx,  hy,  hz), ( hx,  hy,  hz), ( hx,  hy, -hz), (-hx,  hy, -hz)),
-        ((-hx, -hy, -hz), ( hx, -hy, -hz), ( hx, -hy,  hz), (-hx, -hy,  hz)),
+        ((0, 0, 1),  ((-hx, -hy, hz), (hx, -hy, hz), (hx, hy, hz), (-hx, hy, hz))),
+        ((0, 0, -1), ((hx, -hy, -hz), (-hx, -hy, -hz), (-hx, hy, -hz), (hx, hy, -hz))),
+        ((1, 0, 0),  ((hx, -hy, hz), (hx, -hy, -hz), (hx, hy, -hz), (hx, hy, hz))),
+        ((-1, 0, 0), ((-hx, -hy, -hz), (-hx, -hy, hz), (-hx, hy, hz), (-hx, hy, -hz))),
+        ((0, 1, 0),  ((-hx, hy, hz), (hx, hy, hz), (hx, hy, -hz), (-hx, hy, -hz))),
+        ((0, -1, 0), ((-hx, -hy, -hz), (hx, -hy, -hz), (hx, -hy, hz), (-hx, -hy, hz))),
     ]
     glBegin(GL_QUADS)
-    for f in faces:
+    for n, f in faces:
+        glNormal3f(*n)
         for v in f:
             glVertex3f(*v)
     glEnd()
 
 
-def _sphere(rx, ry, rz, seg=20, rings=12):
+def _sphere(rx, ry, rz, seg=28, rings=18):
     for i in range(rings):
         lat0 = math.pi * (-0.5 + i / rings)
         lat1 = math.pi * (-0.5 + (i + 1) / rings)
@@ -100,26 +113,34 @@ def _sphere(rx, ry, rz, seg=20, rings=12):
         for j in range(seg + 1):
             lng = 2 * math.pi * j / seg
             cx, cz = math.cos(lng), math.sin(lng)
+            glNormal3f(*_norm((cx * r0, y0, cz * r0)))
             glVertex3f(rx * cx * r0, ry * y0, rz * cz * r0)
+            glNormal3f(*_norm((cx * r1, y1, cz * r1)))
             glVertex3f(rx * cx * r1, ry * y1, rz * cz * r1)
         glEnd()
 
 
-def _cyl(r, h, axis="y", seg=22):
+def _cyl(r, h, axis="y", seg=28):
     hh = h * 0.5
     glBegin(GL_QUAD_STRIP)
     for j in range(seg + 1):
         a = 2 * math.pi * j / seg
-        cx, cz = math.cos(a) * r, math.sin(a) * r
+        ca, sa = math.cos(a), math.sin(a)
+        cx, cz = ca * r, sa * r
         if axis == "y":
+            glNormal3f(ca, 0, sa)
             glVertex3f(cx, -hh, cz); glVertex3f(cx, hh, cz)
         elif axis == "z":
+            glNormal3f(ca, sa, 0)
             glVertex3f(cx, cz, -hh); glVertex3f(cx, cz, hh)
         else:
+            glNormal3f(0, ca, sa)
             glVertex3f(-hh, cx, cz); glVertex3f(hh, cx, cz)
     glEnd()
     for sgn in (-1, 1):
+        n = (0, sgn, 0) if axis == "y" else (0, 0, sgn) if axis == "z" else (sgn, 0, 0)
         glBegin(GL_TRIANGLE_FAN)
+        glNormal3f(*n)
         if axis == "y":
             glVertex3f(0, sgn * hh, 0)
         elif axis == "z":
@@ -138,36 +159,39 @@ def _cyl(r, h, axis="y", seg=22):
         glEnd()
 
 
-def _cone(r, h, axis="y", seg=22):
+def _cone(r, h, axis="y", seg=28):
     hh = h * 0.5
+    slope = r / max(h, 1e-6)
+    apex = (0, hh, 0) if axis == "y" else (0, 0, hh) if axis == "z" else (hh, 0, 0)
     glBegin(GL_TRIANGLE_FAN)
-    if axis == "y":
-        glVertex3f(0, hh, 0)
-        for j in range(seg + 1):
-            a = 2 * math.pi * j / seg
-            glVertex3f(math.cos(a) * r, -hh, math.sin(a) * r)
-    elif axis == "z":
-        glVertex3f(0, 0, hh)
-        for j in range(seg + 1):
-            a = 2 * math.pi * j / seg
-            glVertex3f(math.cos(a) * r, math.sin(a) * r, -hh)
-    else:
-        glVertex3f(hh, 0, 0)
-        for j in range(seg + 1):
-            a = 2 * math.pi * j / seg
-            glVertex3f(-hh, math.cos(a) * r, math.sin(a) * r)
+    glNormal3f(*((0, 1, 0) if axis == "y" else (0, 0, 1) if axis == "z" else (1, 0, 0)))
+    glVertex3f(*apex)
+    for j in range(seg + 1):
+        a = 2 * math.pi * j / seg
+        ca, sa = math.cos(a), math.sin(a)
+        glNormal3f(*_norm((ca, slope, sa) if axis == "y" else
+                          (ca, sa, slope) if axis == "z" else (slope, ca, sa)))
+        if axis == "y":
+            glVertex3f(ca * r, -hh, sa * r)
+        elif axis == "z":
+            glVertex3f(ca * r, sa * r, -hh)
+        else:
+            glVertex3f(-hh, ca * r, sa * r)
     glEnd()
+    # base cap
     glBegin(GL_TRIANGLE_FAN)
+    n = (0, -1, 0) if axis == "y" else (0, 0, -1) if axis == "z" else (-1, 0, 0)
+    glNormal3f(*n)
     glVertex3f(*((0, -hh, 0) if axis == "y" else (0, 0, -hh) if axis == "z" else (-hh, 0, 0)))
     for j in range(seg + 1):
         a = 2 * math.pi * j / seg
-        cx, cz = math.cos(a) * r, math.sin(a) * r
+        ca, sa = math.cos(a), math.sin(a)
         if axis == "y":
-            glVertex3f(cx, -hh, cz)
+            glVertex3f(ca * r, -hh, sa * r)
         elif axis == "z":
-            glVertex3f(cx, cz, -hh)
+            glVertex3f(ca * r, sa * r, -hh)
         else:
-            glVertex3f(-hh, cx, cz)
+            glVertex3f(-hh, ca * r, sa * r)
     glEnd()
 
 
@@ -176,6 +200,7 @@ def _pyramid(sx, sy, sz):
     base = [(-hx, -hy, hz), (hx, -hy, hz), (hx, -hy, -hz), (-hx, -hy, -hz)]
     apex = (0, hy, 0)
     glBegin(GL_QUADS)
+    glNormal3f(0, -1, 0)
     for v in base:
         glVertex3f(*v)
     glEnd()
@@ -183,11 +208,12 @@ def _pyramid(sx, sy, sz):
     for i in range(4):
         a = base[i]
         b = base[(i + 1) % 4]
+        glNormal3f(*_norm(_cross(_sub(b, a), _sub(apex, a))))
         glVertex3f(*a); glVertex3f(*b); glVertex3f(*apex)
     glEnd()
 
 
-def _torus(R, r, axis="y", seg=26, side=12):
+def _torus(R, r, axis="y", seg=32, side=14):
     def pt(u, v):
         X = (R + r * math.cos(v)) * math.cos(u)
         Y = (R + r * math.cos(v)) * math.sin(u)
@@ -197,14 +223,65 @@ def _torus(R, r, axis="y", seg=26, side=12):
         if axis == "y":
             return (X, Z, Y)
         return (Z, Y, X)
+
+    def nrm(u, v):
+        N = (math.cos(u) * math.cos(v), math.cos(u) * math.sin(v), math.sin(v))
+        if axis == "z":
+            return N
+        if axis == "y":
+            return (N[0], N[2], N[1])
+        return (N[2], N[1], N[0])
+
     for i in range(seg):
         u0 = 2 * math.pi * i / seg
         u1 = 2 * math.pi * (i + 1) / seg
         glBegin(GL_QUAD_STRIP)
         for j in range(side + 1):
             v = 2 * math.pi * j / side
-            glVertex3f(*pt(u0, v))
-            glVertex3f(*pt(u1, v))
+            glNormal3f(*nrm(u0, v)); glVertex3f(*pt(u0, v))
+            glNormal3f(*nrm(u1, v)); glVertex3f(*pt(u1, v))
+        glEnd()
+
+
+def _loft(sections, seg=28):
+    """Smooth tube through elliptical cross-sections.
+
+    Each section is [y, rx, rz, cx, cz] in the part's local space. Consecutive
+    sections are skinned with a quad strip and smooth normals, so limbs and
+    torso read as shaped, tapering anatomy rather than stacked primitives.
+    """
+    n = len(sections)
+    if n < 2:
+        return
+    rings = []
+    for y, rx, rz, cx, cz in sections:
+        rings.append([(cx + rx * math.cos(2 * math.pi * j / seg),
+                       y,
+                       cz + rz * math.sin(2 * math.pi * j / seg))
+                      for j in range(seg)])
+
+    def normal(i, j):
+        a = rings[i][(j - 1) % seg]
+        b = rings[i][(j + 1) % seg]
+        c = rings[max(0, i - 1)][j]
+        d = rings[min(n - 1, i + 1)][j]
+        return _norm(_cross(_sub(d, c), _sub(b, a)))
+
+    for i in range(n - 1):
+        glBegin(GL_QUAD_STRIP)
+        for j in range(seg):
+            glNormal3f(*normal(i, j)); glVertex3f(*rings[i][j])
+            glNormal3f(*normal(i + 1, j)); glVertex3f(*rings[i + 1][j])
+        glNormal3f(*normal(i, 0)); glVertex3f(*rings[i][0])
+        glNormal3f(*normal(i + 1, 0)); glVertex3f(*rings[i + 1][0])
+        glEnd()
+    for i, sgn in ((0, -1), (n - 1, 1)):
+        y, rx, rz, cx, cz = sections[i]
+        glBegin(GL_TRIANGLE_FAN)
+        glNormal3f(0, sgn, 0)
+        glVertex3f(cx, y, cz)
+        for j in range(seg + 1):
+            glVertex3f(*rings[i][j % seg])
         glEnd()
 
 
@@ -220,7 +297,19 @@ def _extents(part):
     if sh == "torus":
         R, r = s[0], s[1]
         ax = part.get("axis", "y")
-        return (R + r, R + r, r) if ax == "z" else (R + r, r, R + r)
+        if ax == "z":
+            return (R + r, R + r, r)
+        if ax == "y":
+            return (R + r, r, R + r)
+        return (r, R + r, R + r)
+    if sh == "loft":
+        secs = part.get("sections", [])
+        if not secs:
+            return (0.5, 0.5, 0.5)
+        ex = max(abs(cx) + rx for _, rx, _, cx, _ in secs)
+        ey = max(abs(y) for y, _, _, _, _ in secs)
+        ez = max(abs(cz) + rz for _, _, rz, _, cz in secs)
+        return (ex, ey, ez)
     return (0.5, 0.5, 0.5)
 
 
@@ -323,7 +412,7 @@ class Viewer:
             self.explode = 0.0
         return self.model.get("name", "Object")
 
-    def _geom(self, part):
+    def _geom(self, part, scale=1.0):
         glPushMatrix()
         px, py, pz = part.get("pos", [0, 0, 0])
         dx, dy, dz = part["dir"]
@@ -335,6 +424,8 @@ class Viewer:
             glRotatef(part["rot"][0], 1, 0, 0)
             glRotatef(part["rot"][1], 0, 1, 0)
             glRotatef(part["rot"][2], 0, 0, 1)
+        if scale != 1.0:
+            glScalef(scale, scale, scale)
         sh = part["shape"]
         s = part["size"]
         ax = part.get("axis", "y")
@@ -350,6 +441,8 @@ class Viewer:
             _pyramid(*s)
         elif sh == "torus":
             _torus(s[0], s[1], ax)
+        elif sh == "loft":
+            _loft(part["sections"])
         glPopMatrix()
 
     def _camera(self):
@@ -383,35 +476,77 @@ class Viewer:
 
     def _render_scene(self):
         glEnable(GL_DEPTH_TEST)
-        glDepthMask(False)
         glEnable(GL_BLEND)
         glDisable(GL_CULL_FACE)
-
         glPolygonMode(GL_FRONT_AND_BACK, GL_FILL)
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE)
-        for i, p in enumerate(self.parts):
-            c = self._color_of(i, p)
-            if p.get("hot"):
-                a = 0.55
-            elif i == self.selected:
-                c, a = COLORS["amber"], 0.45 + 0.35 * self.pulse
-            else:
-                a = 0.13
-            glColor4f(c[0], c[1], c[2], a)
-            self._geom(p)
 
-        glPolygonMode(GL_FRONT_AND_BACK, GL_LINE)
-        glLineWidth(1.6)
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE)
+        # 1. Solid, depth-correct shaded surfaces. Standard alpha blending
+        #    (not additive) keeps overlapping armour plates from blowing out
+        #    into a flat white blob. Depth writes make front plates occlude
+        #    rear ones, so the form reads as a real object with volume.
+        glDepthMask(True)
+        glEnable(GL_LIGHTING)
+        glEnable(GL_LIGHT0)
+        glEnable(GL_COLOR_MATERIAL)
+        glColorMaterial(GL_FRONT_AND_BACK, GL_DIFFUSE)
+        glLightfv(GL_LIGHT0, GL_POSITION, (0.30, 0.55, 1.0, 0.0))
+        glLightfv(GL_LIGHT0, GL_AMBIENT, (0.26, 0.30, 0.36, 1.0))
+        glLightfv(GL_LIGHT0, GL_DIFFUSE, (0.88, 0.94, 1.00, 1.0))
+        glLightfv(GL_LIGHT0, GL_SPECULAR, (0.22, 0.30, 0.38, 1.0))
+        glMaterialfv(GL_FRONT_AND_BACK, GL_SPECULAR, (0.18, 0.26, 0.34, 1.0))
+        glMaterialf(GL_FRONT_AND_BACK, GL_SHININESS, 42.0)
+        glLightModeli(GL_LIGHT_MODEL_TWO_SIDE, 0)
+
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
         for i, p in enumerate(self.parts):
             c = self._color_of(i, p)
             if p.get("hot"):
                 a = 0.95
             elif i == self.selected:
-                c, a = COLORS["amber"], 1.0
+                c, a = COLORS["amber"], 0.92
             else:
-                a = 0.5
+                a = 0.92
             glColor4f(c[0], c[1], c[2], a)
+            self._geom(p)
+
+        glDisable(GL_LIGHTING)
+        glDisable(GL_COLOR_MATERIAL)
+
+        # 1b. Emissive cyan energy. Hot parts (reactor, optics, repulsors) are
+        #     unlit and drawn additively so they read as light sources against
+        #     the dark gunmetal, instead of as tinted metal.
+        glDepthMask(False)
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE)
+        for p in self.parts:
+            if not p.get("hot"):
+                continue
+            glColor4f(HOT[0], HOT[1], HOT[2], 0.80)
+            self._geom(p)
+            glColor4f(HOT[0], HOT[1], HOT[2], 0.16)
+            self._geom(p, scale=1.06)
+
+        # 2. Subtle holographic rim. Back faces of a barely enlarged copy are
+        #    hidden behind the solid model except at the silhouette, giving a
+        #    thin cyan edge. No mesh tessellation grid is drawn.
+        glDepthMask(False)
+        glEnable(GL_CULL_FACE)
+        glCullFace(GL_FRONT)
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE)
+        rim = HOT
+        glColor4f(rim[0], rim[1], rim[2], 0.16)
+        for p in self.parts:
+            self._geom(p, scale=1.015)
+        glDisable(GL_CULL_FACE)
+
+        # 3. Faint panel seams only on hard-edged shapes, to suggest machining.
+        glPolygonMode(GL_FRONT_AND_BACK, GL_LINE)
+        glLineWidth(1.0)
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE)
+        for i, p in enumerate(self.parts):
+            if p["shape"] not in ("box", "pyramid"):
+                continue
+            c = self._color_of(i, p)
+            glColor4f(min(1.0, c[0] * 1.7), min(1.0, c[1] * 1.7), min(1.0, c[2] * 1.7), 0.22)
             self._geom(p)
 
         glPolygonMode(GL_FRONT_AND_BACK, GL_FILL)
@@ -420,6 +555,8 @@ class Viewer:
     def _do_pick(self, mx, my):
         glClearColor(0, 0, 0, 1)
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
+        glDisable(GL_LIGHTING)
+        glDisable(GL_COLOR_MATERIAL)
         glDisable(GL_BLEND)
         glDepthMask(True)
         glEnable(GL_DEPTH_TEST)

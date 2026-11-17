@@ -1,3 +1,4 @@
+from agent import secrets_store
 """Tier 3.3 — the API-key setup panel, out of the main HUD class.
 
 Kept separate so `JarvisUI` is not the place every dialog is born. The panel

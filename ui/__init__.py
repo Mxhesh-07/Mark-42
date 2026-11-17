@@ -134,14 +134,16 @@ class JarvisUI:
                     size, _, pos = geo.partition("+")
                     w_txt, _, h_txt = size.partition("x")
                     if w_txt.isdigit() and h_txt.isdigit():
-                        W, H = int(w_txt), int(h_txt)
+                        gw, gh = int(w_txt), int(h_txt)
+                        if gw > 200 and gh > 200:
+                            W, H = gw, gh
             except Exception:
                 pass
 
         self.W = W
         self.H = H
 
-        self.FACE_SZ = min(int(H * 0.54), 400)
+        self.FACE_SZ = max(200, min(int(H * 0.54), 400))
         self.FCX     = W // 2
         self.FCY     = int(H * 0.13) + self.FACE_SZ // 2
 
@@ -337,6 +339,10 @@ class JarvisUI:
     def update_mic_level(self, level):
         self.mic_level = max(0.0, min(1.0, level))
 
+    def set_connected(self, on: bool) -> None:
+        """Uplink state for mirrors (the web HUD shows it; Tk ignores it)."""
+        self._connected = bool(on)
+
     def _load_face(self, path):
         FW = self.FACE_SZ
         try:
@@ -405,7 +411,7 @@ class JarvisUI:
         t    = self.tick
         FCX  = self.FCX
         FCY  = self.FCY
-        FW   = self.FACE_SZ
+        FW   = max(100, getattr(self, "FACE_SZ", 200) or 200)
         c.delete("all")
 
         for x in range(0, W, 44):
@@ -1167,6 +1173,29 @@ class JarvisUI:
 
     def toggle_screenshot_mode(self) -> bool:
         return self.set_screenshot_mode(not getattr(self, "_screenshot_mode", False))
+
+    PERSONAS = ("jarvis", "friday", "ultron")
+
+    def set_persona(self, name: str) -> str:
+        """Switch the interface protocol (JARVIS / FRIDAY / ULTRON).
+
+        The native window has no palette to shift, so this only records the
+        choice and reports it. ``HudUI`` overrides it to publish to the HUD,
+        where the colours, ring tempo and name actually change.
+        """
+        key = str(name or "").strip().lower()
+        aliases = {"j.a.r.v.i.s": "jarvis", "f.r.i.d.a.y": "friday",
+                   "u.l.t.r.o.n": "ultron", "ultron": "ultron"}
+        key = aliases.get(key, key)
+        if key not in self.PERSONAS:
+            self.jarvis_think("err", f"unknown protocol: {name}")
+            return ""
+        self.persona = key
+        self.jarvis_think("sys", f"protocol: {key.upper()} (native UI unchanged)")
+        return key
+
+    def get_persona(self) -> str:
+        return getattr(self, "persona", "jarvis")
 
     def open_settings(self):
         """T3.2: theme, cues, kill switch and status in one small window."""

@@ -2,7 +2,7 @@
 Procedural memory — remember HOW a goal was accomplished, not just facts.
 
 The rest of the memory package stores declarative facts ("the user's name is
-Mahesh"). This module stores *procedures*: the sequence of tool actions that
+Alice"). This module stores *procedures*: the sequence of tool actions that
 actually succeeded for a given kind of goal. When a similar goal comes back,
 the executor can start from the proven trajectory instead of planning from
 scratch — which is both faster and more reliable.

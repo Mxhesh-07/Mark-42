@@ -14,6 +14,18 @@ from google import genai
 from google.genai import types
 import time
 
+# --- crash forensics ----------------------------------------------------------
+# A native fault kills the interpreter outright: no exception, no traceback, and
+# the assistant simply stops answering while the process still looks alive. One
+# was observed as 0xc0000005 inside _ctypes.pyd. Dumping every thread's Python
+# stack on a fatal signal makes the next occurrence diagnosable instead of a
+# mystery. Best effort - a redirected or hidden stream may decline.
+try:
+    import faulthandler as _faulthandler
+    _faulthandler.enable()
+except Exception:
+    pass
+
 # --- console encoding ---------------------------------------------------------
 # When stdout is redirected (a log file, a pipe) Windows falls back to cp1252,
 # where the status glyphs this project prints raise UnicodeEncodeError. Fixing
@@ -149,8 +161,8 @@ from hologram_models import get_model as hologram_model, save as hologram_save, 
 
 jarvis_memory = AIMemory()
 
-# Initial memories
-jarvis_memory.set_user_info("name", "Mahesh")
+# Initial memories. The user's name is learned from conversation (or already in
+# memory); it is deliberately not seeded with a hardcoded personal name.
 
 jarvis_memory.add_preference("Iron Man")
 jarvis_memory.add_preference("Artificial Intelligence")
@@ -181,10 +193,41 @@ CHUNK_SIZE          = 1024
 # server-side VAD then mistakes its own voice for the user and answers itself.
 # While output audio is playing we mute the mic uplink, plus ECHO_GUARD_TAIL_S
 # of tail to cover speaker + room propagation delay.
-# Set ECHO_GUARD = False if you always use headphones and want to be able to
-# interrupt JARVIS mid-sentence (barge-in).
 ECHO_GUARD        = True
 ECHO_GUARD_TAIL_S = 0.55
+
+# --- barge-in ----------------------------------------------------------------
+# Keep the microphone live while JARVIS speaks and compare it with the audio
+# going to the speaker. Speech clearly above the expected bleed is the user
+# cutting in. A learned echo baseline and a short start-of-speech grace period
+# are essential: the first burst at the mic is JARVIS's own voice, and treating
+# that as an interruption is what cut sentences off mid-word.
+BARGE_IN              = False    # opt-in: local echo alone cannot yet prove a
+                                  # user interruption reliably on this machine
+BARGE_IN_LEVEL        = 0.14     # normalized RMS floor (0..1)
+BARGE_IN_HITS         = 3        # consecutive chunks (~3 x 64 ms)
+BARGE_IN_RATIO        = 1.45     # mic must beat expected output bleed by this
+BARGE_IN_ECHO_FACTOR  = 1.30     # ...and the learned echo at the microphone
+BARGE_IN_ECHO_ALPHA   = 0.12     # how quickly that echo baseline is learned
+BARGE_IN_ECHO_GRACE_S = 0.45     # ignore barge-in during speaker onset
+# Speaker bleed is a delayed copy of what we just played. Cross-correlation
+# catches it even when AGC clips the mic level to 1.0.
+ECHO_REF_S            = 0.80     # seconds of playback kept as echo reference
+ECHO_CORR_MAX_LAG_S   = 0.25     # speaker-to-mic acoustic delay
+ECHO_CORR_THRESHOLD   = 0.45     # above this, the mic signal is our own voice
+
+# --- speaker playback shape ---------------------------------------------------
+# The Live API delivers PCM in socket-sized packets, not even blocks. Writing
+# each packet directly to PortAudio turns a late packet into a silent gap in the
+# middle of a word. Coalesce into fixed PLAYBACK_BLOCK_S blocks and keep a short
+# partial block across small gaps; only a real turn_complete (or a long gap)
+# flushes it. The receive queue applies backpressure instead of dropping the
+# oldest chunk, because skipped PCM is heard as the voice jumping words.
+PLAYBACK_BLOCK_S      = 0.12
+PLAYBACK_IDLE_S       = 0.08
+PLAYBACK_TAIL_S       = 0.45     # gap that counts as the end of a phrase
+PLAYBACK_MAX_BUFFER_S = 1.00     # never let the jitter cushion grow past this
+PLAYBACK_QUEUE_MAX    = 200      # bounded, but with backpressure — no drops
 
 # --- speech detection (VAD) tuning -------------------------------------------
 # The Live API's automatic VAD decides when your turn has ended. With its
@@ -220,6 +263,16 @@ VAD_END_SENS   = True
 # built-in mic array). config/audio.json is optional:
 #     { "input_device": 2 }                  # by PyAudio index
 #     { "input_device": "Microphone Array" } # or by name substring
+#     { "mic_level": 0.7 }                   # pin capture gain (also unmutes)
+#     { "unmute_mic": true }                 # clear the Windows mute switch only
+# Phase 2 modular layer (all optional, Gemini Live still owns the audio):
+#     { "perception": false }                # turn the whole layer off
+#     { "perception_state": false }          # state machine only
+#     { "perception_vad": true }             # local Silero VAD as well
+#     { "perception_wake_word": true }       # local "hey_jarvis" listener
+# A muted endpoint opens fine and reports a level but captures digital silence;
+# unmute_mic self-heals that without changing the user's gain. Without it a
+# muted mic still produces a clear watchdog message naming the endpoint.
 MIC_DEAD_PEAK  = 40      # peak below this = device captured only electrical noise
 MIC_ALIVE_PEAK = 90      # stop scanning early once a device clears this
 MIC_BAD_PEAK   = 30000   # sustained near-full-scale = saturated/broken stream
@@ -229,35 +282,35 @@ _VIRTUAL_HINTS = (
 )
 
 # --- microphone noise gate ----------------------------------------------------
-# The built-in mic array used to run hot: its Windows capture level shipped at
-# +17 dB, putting the room noise floor near RMS 400 (~-38 dBFS) — loud enough
-# that even webrtcvad called most silence "speech". The level is now pinned at
-# ~+10 dB (config/audio.json -> "mic_level", applied via _apply_mic_level),
-# which drops the floor to ~RMS 40-64. On top of that we gate the uplink:
-# nothing is sent until the signal rises clearly above the tracked noise floor,
-# then audio keeps flowing for a short hangover so word tails are not clipped.
-# Between utterances we send literal silence, which is what lets the VAD close
-# the turn promptly. Set NOISE_GATE = False to send the raw microphone signal.
-# Tunable from config/audio.json: {"noise_gate": true, "gate_factor": 2.5}
+# The built-in mic array runs hot: even at mic_level 0.7 this room measures an
+# ambient floor around RMS 100-200 (~-50 dBFS), and webrtcvad on its own flags
+# most of that noise as speech. The gate therefore asks for an energy rise as
+# well as a VAD verdict: nothing is sent until the signal clears the tracked
+# ambient level, then audio keeps flowing for a short hangover so word tails are
+# not clipped. Between utterances we send literal silence, which is what lets the
+# server VAD close the turn promptly. Set NOISE_GATE = False to send raw audio.
+# Tunable from config/audio.json: {"noise_gate": true, "gate_factor": 1.6}
 NOISE_GATE       = True
-GATE_OPEN_FACTOR = 1.9    # open when chunk RMS > noise floor * this
-GATE_HOLD_FACTOR = 1.3    # stay open while RMS > noise floor * this
-GATE_HANGOVER_S  = 0.35   # ... and for this long after it drops below
+GATE_OPEN_FACTOR = 1.6    # open when chunk RMS > noise floor * this
+GATE_HOLD_FACTOR = 1.25   # VAD may open down to RMS > noise floor * this
+GATE_HANGOVER_S  = 0.4   # ... and for this long after it drops below
 # Floor clamps. These must track the capture level set by _apply_mic_level
 # (config/audio.json "mic_level"), because both speech and the room's noise
-# scale with the gain. At the default level 0.75 (+9.9 dB), measured on this
-# laptop's Realtek array, a quiet room sits near RMS 40-64 and normal speech
-# near RMS 250-1000:
-#   * the low clamp must sit ABOVE the room's burst level (RMS ~108 here) or the
-#     gate latches open at start-up and never recovers — the floor is only
-#     learned while muted, so an open gate cannot correct itself;
-#   * the high clamp must sit BELOW normal speech, or a loud room would mute
-#     the user instead of the noise.
-# Override in config/audio.json: {"gate_floor_min": 65, "gate_floor_max": 125}
-GATE_MIN_FLOOR   = 65.0
-GATE_MAX_FLOOR   = 125.0
-GATE_PERCENTILE  = 25     # floor = low percentile of recent muted-chunk levels
-GATE_WINDOW      = 90     # muted chunks kept for that estimate (~6 s)
+# scale with the gain.
+#   * the ambient estimate is an upper percentile (75th) of recent non-speech
+#     chunks, so ordinary room noise sits below it while short bursts (keyboard,
+#     cough) are ignored;
+#   * the high clamp must sit BELOW normal speech, or a loud room would mute the
+#     user instead of the noise. Measured here (mic_level 0.7): ambient p75 is
+#     ~170 RMS with p90 ~200 and occasional 350+ bursts; normal speech is
+#     300-2000. 180 separates ordinary noise from speech while leaving the
+#     VAD-assisted path open for quieter speech.
+# The gate also learns while open (see MicGate), so it can no longer latch open.
+# Override in config/audio.json: {"gate_floor_min": 40, "gate_floor_max": 180}
+GATE_MIN_FLOOR   = 40.0
+GATE_MAX_FLOOR   = 180.0
+GATE_PERCENTILE  = 75     # ambient level = upper percentile of non-speech chunks
+GATE_WINDOW      = 90     # recent chunks kept for that estimate (~6 s)
 GATE_SILENCE     = b"\x00" * CHUNK_SIZE * 2   # one chunk of 16-bit silence
 
 # --- voice activity detection -------------------------------------------------
@@ -269,7 +322,10 @@ GATE_SILENCE     = b"\x00" * CHUNK_SIZE * 2   # one chunk of 16-bit silence
 # NOTE: these detectors have absolute energy thresholds, so they only behave
 # when the capture gain is sane. This machine's "Microphone Array" shipped at
 # +17 dB, where webrtcvad flagged ~80% of *silent* frames as speech; at +3 dB it
-# flags 0%. Windows mic level is the first thing to check if noise returns.
+# flags 0%. At the current mic_level 0.7 the room is still hot enough that
+# aggression 0-2 flags 64-82% of silent frames as speech — measured — while
+# aggression 3 flags 0%. That is why the default is 3, and why the gate now
+# requires real energy before a VAD verdict can open it.
 VAD_ENGINE     = True   # use webrtcvad for the gate decision when available
 VAD_AGGRESSION = 3      # 0 (permissive) .. 3 (most aggressive noise rejection)
 VAD_FRAME_MS   = 20     # webrtcvad accepts 10, 20 or 30 ms frames
@@ -293,6 +349,11 @@ def _load_audio_config() -> dict:
 
 
 AUDIO_CONFIG = _load_audio_config()
+
+# Voice barge-in is off by default: level/clipping checks were cutting the
+# model's own reply mid-word. Enable explicitly in config/audio.json once a
+# real acoustic-echo canceller is in place.
+BARGE_IN = bool(AUDIO_CONFIG.get("barge_in", BARGE_IN))
 
 # T1.6: the capture helpers live in jarvis/device_setup.py; these constants are
 # passed in so the module does not depend on main's tuning block.
@@ -364,11 +425,19 @@ LIVE_TEMPERATURE   = 0.85
 pya = audio.open_pyaudio()
 
 def _get_api_key() -> str:
-    with open(API_CONFIG_PATH, "r", encoding="utf-8") as f:
-        return json.load(f)["gemini_api_key"]
-    
-    with open(API_CONFIG_PATH, "r", encoding="utf-8") as f:
-        return json.load(f)["gemini_api_key"]
+    try:
+        from agent import secrets_store
+
+        key = secrets_store.get_key("gemini_api_key")
+        if key:
+            return key
+    except Exception:
+        pass
+    try:
+        with open(API_CONFIG_PATH, "r", encoding="utf-8") as f:
+            return json.load(f)["gemini_api_key"]
+    except Exception:
+        return ""
 
 def _apply_prompt_budget(prompt: str) -> str:
     """I4: optional compact variant for small-context models.
@@ -486,6 +555,8 @@ def _update_memory_async(user_text: str, jarvis_text: str) -> None:
 
 
 from jarvis.tools_schema import TOOL_DECLARATIONS
+from jarvis.playback_buffer import PlaybackBuffer
+from jarvis.echo_guard import echo_correlation, resample_24k_to_16k
 
 
 class JarvisLive(ToolRunnerMixin):
@@ -502,8 +573,31 @@ class JarvisLive(ToolRunnerMixin):
 
         # --- echo guard state -------------------------------------------------
         self._last_play_ts = 0.0                 # when output last hit the speaker
+        self._play_start_ts = 0.0                # start of the current speech burst
         self._play_lock    = threading.Lock()
         self._echo_dropped = 0                   # mic chunks suppressed (diagnostic)
+
+        # --- barge-in / interruption -----------------------------------------
+        self._out_level   = 0.0                  # normalized RMS of what is playing
+        self._echo_baseline = 0.0                # learned bleed at the microphone
+        self._echo_corr   = 0.0                  # similarity of mic to playback
+        self._echo_ref    = bytearray()          # recent 16 kHz playback reference
+        self._echo_ref_lock = threading.Lock()
+        self._cancel_turn = False                # drop the rest of this reply
+        self._flush_epoch = 0                    # invalidates buffered playback
+        self.muted        = False                # microphone muted from the HUD
+        from jarvis.barge_in import BargeInDetector
+        self._barge = BargeInDetector(
+            floor=BARGE_IN_LEVEL, ratio=BARGE_IN_RATIO, hits=BARGE_IN_HITS,
+            echo_factor=BARGE_IN_ECHO_FACTOR)
+
+        # --- playback continuity diagnostics --------------------------------
+        self._audio_turn_done = False            # turn_complete seen by receive loop
+        self._audio_high_water = 0               # receive queue applied backpressure
+        self._audio_cancel_drops = 0             # chunks dropped from a cancelled turn
+        self._audio_epoch_drops = 0              # buffers cleared by an interrupt
+        self._audio_tail_flushes = 0             # tails flushed on a long gap
+        self._audio_barge_ins = 0                # local barge-in triggers
 
         # --- noise gate state -------------------------------------------------
         # T1.6: gate state/logic lives in jarvis/mic_gate.py.
@@ -525,17 +619,29 @@ class JarvisLive(ToolRunnerMixin):
         # identification occasionally instead of spawning a thread per chunk.
         self._last_voiceid_ts = 0.0
 
+        # --- Phase 2: modular runtime / perception ---------------------------
+        # The bridge is fed from this class's own microphone stream; it never
+        # opens a second one. Optional and fail-soft, like the rest of startup.
+        from jarvis.perception_bridge import perception_bridge
+        self.bridge = perception_bridge
+        self.bridge.start()
+
     def speak(self, text: str):
         """Thread-safe speak — any thread can call this."""
         if not self._loop or not self.session:
             return
-        asyncio.run_coroutine_threadsafe(
-            self.session.send_client_content(
-                turns={"parts": [{"text": text}]},
-                turn_complete=True
-            ),
-            self._loop
-         )
+        try:
+            asyncio.run_coroutine_threadsafe(
+                self.session.send_client_content(
+                    turns={"parts": [{"text": text}]},
+                    turn_complete=True
+                ),
+                self._loop
+            )
+        except Exception as e:
+            # A proactive alert can fire during a reconnect. Losing the message
+            # is better than killing the thread that sent it.
+            print(f"[JARVIS] speak dropped: {e}")
     
     def _build_config(self) -> types.LiveConnectConfig:
         """T1.6: prompt composition and config live in jarvis/live_config.py."""
@@ -573,8 +679,15 @@ class JarvisLive(ToolRunnerMixin):
 
     def _mark_output_playing(self):
         """Record that a chunk of JARVIS audio just went to the speaker."""
+        # Monotonic: a wall-clock step (NTP, manual change) must not leave the
+        # microphone muted for an arbitrary length of time.
+        now = time.monotonic()
         with self._play_lock:
-            self._last_play_ts = time.time()
+            was_playing = (now - self._last_play_ts) < ECHO_GUARD_TAIL_S
+            self._last_play_ts = now
+            if not was_playing:
+                # New speech burst: the speaker onset is a known loud echo spike.
+                self._play_start_ts = now
 
     def _output_playing(self) -> bool:
         """True while JARVIS's own voice may still be audible in the room.
@@ -585,15 +698,123 @@ class JarvisLive(ToolRunnerMixin):
         if not ECHO_GUARD:
             return False
         with self._play_lock:
-            return (time.time() - self._last_play_ts) < ECHO_GUARD_TAIL_S
+            return (time.monotonic() - self._last_play_ts) < ECHO_GUARD_TAIL_S
+
+    # -- interruption ------------------------------------------------------ #
+    def set_muted(self, on: bool) -> None:
+        """Mute/unmute the uplink without touching the rest of the session."""
+        self.muted = bool(on)
+        print(f"[JARVIS] 🎙️ Microphone {'muted' if self.muted else 'live'}")
+
+    def interrupt(self) -> None:
+        """Stop the current reply now. Safe from any thread (the HUD calls it).
+
+        Local playback is flushed immediately and the rest of the model's audio
+        for this turn is discarded until it reports the turn finished. Silence
+        is not sent to the server: the microphone simply starts flowing again,
+        so the Live API's own VAD hears the interruption and stops generating.
+        """
+        self._cancel_turn = True
+        self._flush_epoch += 1
+        self._out_level = 0.0
+        self._echo_baseline = 0.0
+        self._echo_corr = 0.0
+        with self._echo_ref_lock:
+            self._echo_ref.clear()
+        self._audio_turn_done = True
+        self._audio_epoch_drops += 1
+        self._barge.reset()
+        with self._play_lock:
+            self._last_play_ts = 0.0
+            self._play_start_ts = 0.0
+        try:
+            self.ui.stop_speaking()
+        except Exception:
+            pass
+        loop = self._loop
+        if loop is not None and self.audio_in_queue is not None:
+            try:
+                asyncio.run_coroutine_threadsafe(self._drain_audio(), loop)
+            except Exception:
+                pass
+
+    async def _drain_audio(self) -> None:
+        q = self.audio_in_queue
+        if q is None:
+            return
+        while True:
+            try:
+                q.get_nowait()
+            except asyncio.QueueEmpty:
+                return
+
+    def _check_barge_in(self, level: float) -> bool:
+        """Return True when the microphone is clearly the user, not the speaker."""
+        if not BARGE_IN or not self._output_playing():
+            self._barge.reset()
+            self._echo_baseline = 0.0
+            self._echo_corr = 0.0
+            return False
+
+        # Loudness alone is unreliable: AGC can clip speaker bleed to 1.0 even
+        # when the block being queued is quiet. Bleed is a delayed copy of what
+        # we just played, so correlation is the authoritative echo test.
+        try:
+            with self._echo_ref_lock:
+                out_ref = bytes(self._echo_ref)
+            with self._mic_lock:
+                mic_ref = bytes(self._mic_buffer)
+            corr = echo_correlation(
+                out_ref, mic_ref, max_lag_s=ECHO_CORR_MAX_LAG_S
+            ) if out_ref and mic_ref else 0.0
+        except Exception:
+            corr = 0.0
+        self._echo_corr = corr
+
+        if corr >= ECHO_CORR_THRESHOLD:
+            self._echo_baseline += (
+                BARGE_IN_ECHO_ALPHA * (level - self._echo_baseline)
+            )
+            self._barge.reset()
+            return False
+
+        with self._play_lock:
+            start_ts = self._play_start_ts
+        now = time.monotonic()
+
+        # The speaker's first burst is the loudest thing the mic hears. Learning
+        # it as echo for a few hundred ms prevents an onset spike from stopping
+        # the sentence before correlation has a reference to work with.
+        if start_ts and (now - start_ts) < BARGE_IN_ECHO_GRACE_S:
+            self._echo_baseline += (
+                BARGE_IN_ECHO_ALPHA * (level - self._echo_baseline)
+            )
+            self._barge.reset()
+            return False
+
+        baseline = self._echo_baseline
+        threshold = self._barge.threshold(self._out_level, baseline)
+        if level <= threshold:
+            # Only learn from chunks we already consider safe. A real
+            # interruption must not adapt the baseline up to its own level.
+            baseline += BARGE_IN_ECHO_ALPHA * (level - baseline)
+        self._echo_baseline = baseline
+        return self._barge.check(level, self._out_level, baseline)
 
     async def _listen_audio(self):
         device = await asyncio.to_thread(_pick_input_device)
+        dev_name = await asyncio.to_thread(_device_name, device)
+
+        # A muted endpoint is indistinguishable from a silent room until you ask
+        # Windows directly: it opens, reports a level, and delivers zeros. Pass
+        # it over only when the user asked JARVIS to manage the microphone.
+        if AUDIO_CONFIG.get("unmute_mic"):
+            await asyncio.to_thread(_device_setup.unmute_input, dev_name)
 
         # Optional: pin the Windows capture level (see _apply_mic_level).
         _lvl = AUDIO_CONFIG.get("mic_level")
         if _lvl is not None:
-            await asyncio.to_thread(_apply_mic_level, _device_name(device), float(_lvl))
+            await asyncio.to_thread(_apply_mic_level, dev_name, float(_lvl))
 
         try:
             stream = await asyncio.to_thread(
@@ -627,6 +848,7 @@ class JarvisLive(ToolRunnerMixin):
             AUDIO_CONFIG.get("gate_floor_max", GATE_MAX_FLOOR))
         gate_sent    = 0     # chunks actually forwarded (diagnostic)
         gate_dropped = 0     # chunks replaced with silence (diagnostic)
+        echo_mark    = self._echo_dropped   # window baseline for echo drops
 
         # WebRTC VAD: decides speech vs background noise, per 20 ms frame.
         vad = None
@@ -652,21 +874,46 @@ class JarvisLive(ToolRunnerMixin):
                     stream.read, CHUNK_SIZE, exception_on_overflow=False
                 )
 
-                # Half-duplex echo guard: keep reading so the device buffer
-                # never backs up, but don't let JARVIS's own voice reach
-                # Gemini (which would treat it as a user command).
-                if self._output_playing():
-                    self._echo_dropped += 1
-                    self.ui.update_mic_level(0.0)
-                    await asyncio.sleep(0)
-                    continue
-
                 samples = np.frombuffer(data, dtype=np.int16)
 
                 level = min(
                     np.abs(samples).mean() / 5000,
                     1.0
-                )
+                ) if samples.size else 0.0
+
+                # Keep the raw mic history current before the echo/barge-in
+                # decision so correlation sees the chunk that caused the level.
+                if not self.muted:
+                    with self._mic_lock:
+                        self._mic_buffer.extend(data)
+                        if len(self._mic_buffer) > self._mic_max_bytes:
+                            del self._mic_buffer[:-self._mic_max_bytes]
+
+                # Muted from the HUD: keep the stream alive with silence so the
+                # server can close the turn, but nothing from the room goes up.
+                if self.muted:
+                    self.ui.update_mic_level(0.0)
+                    self._barge.reset()
+                    data = GATE_SILENCE[:len(data)]
+                elif self._output_playing():
+                    # Barge-in: keep the microphone live while JARVIS speaks and
+                    # stop the reply when the room is clearly louder than the
+                    # speaker bleed. Otherwise stay half-duplex as before.
+                    if self._check_barge_in(level):
+                        self._audio_barge_ins += 1
+                        print(f"[JARVIS] ✋ barge-in mic={level:.3f} "
+                              f"out={self._out_level:.3f} "
+                              f"echo={self._echo_baseline:.3f} "
+                              f"corr={self._echo_corr:.2f}")
+                        self.interrupt()
+                        self.bridge.interrupted()
+                        self.ui.jarvis_think("sys", "barge-in: reply stopped")
+                        self.ui.write_log("[Audio] barge-in — reply stopped")
+                    else:
+                        self._echo_dropped += 1
+                        self.ui.update_mic_level(0.0)
+                        await asyncio.sleep(0)
+                        continue
 
                 self.ui.update_mic_level(level)
 
@@ -676,18 +923,39 @@ class JarvisLive(ToolRunnerMixin):
                 if time.time() - win_start > 12:
                     if win_peak < MIC_DEAD_PEAK and not warned_dead:
                         warned_dead = True
-                        msg = (f"No sound detected on input device {device} — "
-                               "check the selected microphone "
-                               "(config/audio.json -> \"input_device\").")
+                        muted = await asyncio.to_thread(
+                            _device_setup.input_muted, dev_name)
+                        if muted:
+                            msg = (f"Microphone '{dev_name}' is muted in Windows — "
+                                   "unmute it (the mic-mute key, or Sound settings) "
+                                   "or set \"unmute_mic\": true in config/audio.json.")
+                        else:
+                            msg = (f"No sound detected on input device {device} — "
+                                   "check the selected microphone "
+                                   "(config/audio.json -> \"input_device\").")
                         print(f"[JARVIS] ⚠️ {msg}")
                         self.ui.jarvis_think("err", msg)
                         self.ui.write_log(f"[Audio] {msg}")
-                    if gate_on:
-                        total = gate_sent + gate_dropped
-                        muted = (gate_dropped / total * 100) if total else 0.0
+
+                    # The echo guard silently discards every chunk captured
+                    # while JARVIS is audible. If that swallows most of the
+                    # window the user is talking to a muted microphone and has
+                    # no way to know, so say it out loud.
+                    echo_win = self._echo_dropped - echo_mark
+                    echo_mark = self._echo_dropped
+                    heard = gate_sent + gate_dropped + echo_win
+                    echo_pct = (echo_win / heard * 100) if heard else 0.0
+
+                    total = gate_sent + gate_dropped
+                    if gate_on and total:
+                        muted = gate_dropped / total * 100
                         print(f"[JARVIS] 🎙️ Mic gate: floor≈{self._gate.floor:.0f} "
                               f"RMS, muted {muted:.0f}% of the last 12s "
                               f"(now {'open' if self._gate.open else 'shut'})")
+                    if echo_pct >= 25:
+                        print(f"[JARVIS] 🔇 Echo guard hid {echo_pct:.0f}% of the "
+                              f"last 12s — voice input is muted while JARVIS "
+                              f"speaks (ECHO_GUARD_TAIL_S={ECHO_GUARD_TAIL_S}s)")
                     win_start, win_peak = time.time(), 0
                     gate_sent = gate_dropped = 0
 
@@ -710,16 +978,16 @@ class JarvisLive(ToolRunnerMixin):
 
                 raw_data = data          # ungated audio, kept for speaker ID
 
+                # Phase 2: let the modular VAD / wake word see the real room
+                # audio, not the gated copy sent to Gemini. No new stream is
+                # opened — they read from the chunk carried in the event.
+                self.bridge.feed_mic(raw_data, level)
+
                 if self._gate_keeps_audio(samples, gate_on, gate_factor, vad_speech):
                     gate_sent += 1
                 else:
                     data = GATE_SILENCE[:len(data)]
                     gate_dropped += 1
-
-                with self._mic_lock:
-                    self._mic_buffer.extend(raw_data)
-                    if len(self._mic_buffer) > self._mic_max_bytes:
-                        del self._mic_buffer[:-self._mic_max_bytes]
 
                 await self.out_queue.put({
                     "data": data,
@@ -787,24 +1055,47 @@ class JarvisLive(ToolRunnerMixin):
                 async for response in turn:
 
                     if response.data:
-                        # B6: drop the oldest audio chunk rather than raise when
-                        # the speaker side is behind; speech degrades gracefully,
-                        # an exception here would kill the session.
-                        try:
-                            self.audio_in_queue.put_nowait(response.data)
-                        except asyncio.QueueFull:
-                            try:
-                                self.audio_in_queue.get_nowait()
-                            except asyncio.QueueEmpty:
-                                pass
-                            try:
-                                self.audio_in_queue.put_nowait(response.data)
-                            except asyncio.QueueFull:
-                                pass
-                        last_activity = time.time()
+                        if self._cancel_turn:
+                            # Late packets from an interrupted turn are meant to
+                            # be discarded. Count them so a false barge-in shows
+                            # up in diagnostics instead of silently eating words.
+                            self._audio_cancel_drops += 1
+                        else:
+                            self._audio_turn_done = False
+                            q = self.audio_in_queue
+                            if q is not None:
+                                # Never drop the oldest PCM chunk. A skipped
+                                # chunk is audible as the voice jumping to the
+                                # next word; brief backpressure is not.
+                                if q.qsize() >= PLAYBACK_QUEUE_MAX * 0.8:
+                                    self._audio_high_water += 1
+                                    if self._audio_high_water in (1, 10, 50):
+                                        print(f"[JARVIS] ⚠️ Playback queue high "
+                                              f"({q.qsize()}/{PLAYBACK_QUEUE_MAX}) "
+                                              f"— applying backpressure")
+                                await q.put(response.data)
+                            last_activity = time.time()
 
                     if response.server_content:
                         sc = response.server_content
+
+                        # The Live API itself heard the user speak over the model
+                        # (its own VAD). That is the same stop path as a barge-in.
+                        if getattr(sc, "interrupted", False):
+                            self.interrupt()
+                            self.bridge.interrupted()
+                            self.ui.write_log("[Audio] reply interrupted")
+
+                        # A cancelled turn stays cancelled until the server says
+                        # it is done, so late packets from it are never spoken.
+                        if getattr(sc, "generation_complete", False) or sc.turn_complete:
+                            self._cancel_turn = False
+
+                        # Authoritative end-of-speech signal: the play loop can
+                        # now flush its partial block immediately instead of
+                        # guessing from a short inter-packet gap.
+                        if sc.turn_complete:
+                            self._audio_turn_done = True
 
                         if sc.input_transcription and sc.input_transcription.text:
                             frag = sc.input_transcription.text
@@ -815,6 +1106,8 @@ class JarvisLive(ToolRunnerMixin):
                                 if shown:
                                     self.ui.jarvis_think("sys", f"ignored echo: {shown[:70]}")
                             else:
+                                if not in_buf:
+                                    self.bridge.user_speech_start()
                                 # Gemini streams the transcript in fragments
                                 # (" O", "pen", ...). Keep them verbatim and log
                                 # the finished sentence once, when the turn ends,
@@ -839,6 +1132,8 @@ class JarvisLive(ToolRunnerMixin):
                         if sc.output_transcription and sc.output_transcription.text:
                             frag = sc.output_transcription.text
                             if frag and frag.strip():
+                                if not out_buf:
+                                    self.bridge.response_start()
                                 out_buf.append(frag)
                                 # live single-line preview while JARVIS talks
                                 self.ui.stream_jarvis_text(frag.strip() + " ")
@@ -850,6 +1145,23 @@ class JarvisLive(ToolRunnerMixin):
                             full_out = _tidy_sentence(out_buf)
                             in_buf = []
                             out_buf = []
+
+                            # Phase 2: close the mid-turn milestones before the
+                            # slower memory/log work. turn_complete is emitted
+                            # *after* that work because write_log("You: ...")
+                            # sets the HUD's THINK status — clearing the machine
+                            # first would let that status linger until the next
+                            # reply (see WebUI.update_machine).
+                            if full_in:
+                                self.bridge.user_speech_end(full_in)
+                            if full_out and not self._output_playing():
+                                # A transcript confirms a reply, but the speaker
+                                # is normally still draining its buffer here.
+                                # _play_audio owns the real response_end; this
+                                # fallback only covers a text-only reply with no
+                                # audio at all (otherwise we'd drop to STANDBY
+                                # while JARVIS is still audible).
+                                self.bridge.response_end()
 
                             if full_in:
                                 # C3: everything logged from here until the next
@@ -891,11 +1203,26 @@ class JarvisLive(ToolRunnerMixin):
                                     daemon=True
                                 ).start()
 
+                            # Last, so it also clears any THINK status the log
+                            # work above just published.
+                            self.bridge.turn_complete()
+
                     if response.tool_call:
                         fn_responses = []
                         for fc in response.tool_call.function_calls:
                             print(f"[JARVIS] 📞 Tool call: {fc.name}")
-                            fr = await self._execute_tool(fc)
+                            self.bridge.tool_start(fc.name)
+                            ok = False
+                            try:
+                                fr = await self._execute_tool(fc)
+                                ok = not str(
+                                    fr.response.get("result", "")).lower().startswith(
+                                        ("refused", "unknown tool", "tool '"))
+                            except Exception as tool_exc:
+                                self.bridge.error("tool", tool_exc)
+                                raise
+                            finally:
+                                self.bridge.tool_end(fc.name, ok)
                             fn_responses.append(fr)
                         await self.session.send_tool_response(
                             function_responses=fn_responses
@@ -916,33 +1243,99 @@ class JarvisLive(ToolRunnerMixin):
             rate=RECEIVE_SAMPLE_RATE,
             output=True,
         )
-        silence_start = None
+
+        # Rebuild the socket's arbitrary packet sizes into fixed playback blocks.
+        # A short partial block is held across normal network jitter instead of
+        # being flushed on every 80 ms gap — that used to leave a silent hole
+        # between words. turn_complete is the authoritative flush signal.
+        block_bytes = int(RECEIVE_SAMPLE_RATE * PLAYBACK_BLOCK_S) * 2   # 16-bit mono
+        max_bytes = int(RECEIVE_SAMPLE_RATE * PLAYBACK_MAX_BUFFER_S) * 2
+        buf = PlaybackBuffer(block_bytes=block_bytes, max_bytes=max_bytes)
+        buf_epoch = self._flush_epoch
+        last_chunk_ts = time.monotonic()
+
+        async def _write_audio(data: bytes, epoch: int):
+            if not data or epoch != self._flush_epoch:
+                return
+            # Track what the room should be hearing right now; barge-in compares
+            # the microphone against this instead of a fixed threshold.
+            try:
+                samples = np.frombuffer(data, dtype=np.int16)
+                if samples.size:
+                    self._out_level = min(float(np.abs(samples).mean()) / 5000, 1.0)
+            except Exception:
+                pass
+            # Keep a short 16 kHz copy of what the speaker just got. The mic
+            # loop compares against this to tell its own echo from the user.
+            try:
+                ref = resample_24k_to_16k(data)
+                if ref:
+                    with self._echo_ref_lock:
+                        self._echo_ref.extend(ref)
+                        max_ref = int(SEND_SAMPLE_RATE * ECHO_REF_S) * 2
+                        if len(self._echo_ref) > max_ref:
+                            del self._echo_ref[:-max_ref]
+            except Exception:
+                pass
+            # Mark before the (blocking) write: the echo guard must stay up for
+            # the whole time this audio is audible, not just until it is queued.
+            self._mark_output_playing()
+            await asyncio.to_thread(stream.write, data)
+
         try:
             while True:
                 try:
                     chunk = await asyncio.wait_for(
                         self.audio_in_queue.get(),
-                        timeout=0.5
+                        timeout=PLAYBACK_IDLE_S
                     )
-                    if not self.ui.speaking:
-                        self.ui.start_speaking()
-                    self._mark_output_playing()
-                    await asyncio.to_thread(stream.write, chunk)
-                    silence_start = None
                 except asyncio.TimeoutError:
-                    pass
+                    now = time.monotonic()
+                    idle_for = now - last_chunk_ts
+                    if buf_epoch != self._flush_epoch:
+                        buf.clear()
+                        buf_epoch = self._flush_epoch
 
-                try:
-                    while not self.audio_in_queue.empty():
-                        extra = self.audio_in_queue.get_nowait()
-                        self._mark_output_playing()
-                        await asyncio.to_thread(stream.write, extra)
-                except asyncio.QueueEmpty:
-                    pass
+                    # Only flush on turn_complete or a genuinely long gap.
+                    if buf.ready(idle_for, PLAYBACK_TAIL_S,
+                                 self._audio_turn_done):
+                        tail = buf.flush()
+                        if tail:
+                            await _write_audio(tail, buf_epoch)
+                            if not self._audio_turn_done:
+                                self._audio_tail_flushes += 1
 
-                # queue drained and the echo tail has elapsed → mic live again
-                if self.ui.speaking and not self._output_playing():
-                    self.ui.stop_speaking()
+                    if (self.ui.speaking and not self._output_playing()
+                            and (self._audio_turn_done or
+                                 idle_for > PLAYBACK_TAIL_S + ECHO_GUARD_TAIL_S)):
+                        self.ui.stop_speaking()
+                        # Real playback ended (guard expired) — this is the
+                        # authoritative response_end, even when the model sent
+                        # no output_transcription at all.
+                        self.bridge.response_end()
+                    continue
+
+                # An interrupt invalidates anything already buffered; anything
+                # still arriving belongs to the cancelled turn and is dropped.
+                if buf_epoch != self._flush_epoch:
+                    buf.clear()
+                    buf_epoch = self._flush_epoch
+                if self._cancel_turn:
+                    continue
+
+                if not self.ui.speaking:
+                    self.ui.start_speaking()
+                    # Drive the shadow state machine from real audio, not from
+                    # output_transcription: the Live model often streams speech
+                    # with no transcript, which left /api/state stuck in
+                    # LISTENING while the speaker was plainly talking.
+                    self.bridge.response_start()
+                self._mark_output_playing()
+                last_chunk_ts = time.monotonic()
+
+                # Write whole blocks; a burst from the socket may fill several.
+                for part in buf.add(chunk):
+                    await _write_audio(part, buf_epoch)
         except Exception as e:
             print(f"[JARVIS] ❌ Play error: {e}")
             raise
@@ -990,15 +1383,20 @@ class JarvisLive(ToolRunnerMixin):
                     reconnect_attempts = 0
                     self.session        = session
                     self._loop          = asyncio.get_event_loop() 
-                    # B6: bounded queues. Speaker-out already drops oldest on
-                    # overflow (see the put loop); mic-in is bounded here too so
-                    # a slow consumer cannot grow memory without limit.
-                    self.audio_in_queue = asyncio.Queue(maxsize=50)
+                    # Bounded queues with backpressure, not drops. Dropping the
+                    # oldest speech chunk is audible as the voice skipping a
+                    # word, so the receive loop waits for room instead. The mic
+                    # queue stays small: old mic samples are useless.
+                    self.audio_in_queue = asyncio.Queue(maxsize=PLAYBACK_QUEUE_MAX)
                     self.out_queue      = asyncio.Queue(maxsize=10)
 
                     print("[JARVIS] ✅ Connected.")
                     self.ui.write_log("JARVIS online.")
                     self.ui.jarvis_think("sys", "connected to Gemini Live — session established")
+                    try:
+                        self.ui.set_connected(True)
+                    except Exception:
+                        pass
 
                     # W1: hand the initiative engine the live voice as its
                     # speaker. Re-done on every reconnect, so a proactive nudge
@@ -1017,7 +1415,7 @@ class JarvisLive(ToolRunnerMixin):
                         _name = (_entry.get("value") if isinstance(_entry, dict) else _entry) or ""
                     except Exception:
                         _name = ""
-                    greeting = check_in(_name or "Mahesh")
+                    greeting = check_in(_name)
                     if greeting:
                         self.speak(greeting)
                     start_monitoring()
@@ -1065,7 +1463,12 @@ class JarvisLive(ToolRunnerMixin):
 
             except Exception as e:
                 print(f"[JARVIS] ⚠️  Error: {e}")
+                self.bridge.error("connection", e)
                 self.ui.jarvis_think("err", f"connection: {e}")
+                try:
+                    self.ui.set_connected(False)
+                except Exception:
+                    pass
                 traceback.print_exc()
 
             print("[JARVIS] 🔄 Reconnecting...")
@@ -1078,8 +1481,33 @@ class JarvisLive(ToolRunnerMixin):
             print(f"[JARVIS]    retry {reconnect_attempts} in {delay:.1f}s")
             await asyncio.sleep(delay)
 
+def _make_ui():
+    """The web HUD, with the native Tk HUD as the fallback.
+
+    Import/bind failures must never leave the user with no interface at all:
+    ``WebUI`` already keeps Tk visible if the bridge or browser fails, and this
+    outer guard covers a broken install of the new modules.
+    """
+    try:
+        from ui.web_ui import WebUI
+        return WebUI("face.png")
+    except Exception as e:
+        print(f"[HUD] web interface unavailable ({e}); using the native window")
+        from ui import JarvisUI
+        return JarvisUI("face.png")
+
+
 def main():
-    ui = JarvisUI("face.png")
+    ui = _make_ui()
+
+    # Phase 2: bind the process-wide modular bridge to this session's config
+    # and UI before the voice loop constructs JarvisLive.
+    try:
+        from jarvis.perception_bridge import perception_bridge
+
+        perception_bridge.configure(AUDIO_CONFIG, ui)
+    except Exception as _bridge_err:
+        print(f"[Runtime] modular layer disabled ({_bridge_err})")
 
     # T3.23: a short drawn splash; it never blocks startup and removes itself.
     try:
@@ -1097,7 +1525,7 @@ def main():
     ])
 
     ui.set_memory(
-        "User: MAHESH\nMode: Voice\nContext: Active"
+        "Mode: Voice\nContext: Active"
     )
 
     ui.set_agent("Planner", "THINKING")
@@ -1136,6 +1564,20 @@ def main():
             ui.on_text_input = jarvis.speak
         except Exception:
             pass
+        # The web HUD's stop/mute buttons. Attributes are ignored by the native
+        # HUD, so this is safe for both.
+        try:
+            def _hud_interrupt():
+                # Same two-step stop as a voice barge-in: cancel the real
+                # session and tell the shadow state machine about it. Without
+                # the second call a HUD "stop" left machine=responding.
+                jarvis.interrupt()
+                jarvis.bridge.interrupted()
+
+            ui.on_interrupt = _hud_interrupt
+            ui.on_mute = jarvis.set_muted
+        except Exception:
+            pass
         try:
             asyncio.run(jarvis.run())
         except KeyboardInterrupt:
@@ -1143,6 +1585,15 @@ def main():
 
     threading.Thread(target=runner, daemon=True).start()
     ui.root.mainloop()
+
+    # Phase 2: shut the modular runtime down after the UI closes, so no worker
+    # thread is left publishing to a dead HUD.
+    try:
+        from jarvis.perception_bridge import perception_bridge
+
+        perception_bridge.stop()
+    except Exception:
+        pass
 
     # E3: apply a staged, signature-verified update only after the UI has closed.
     try:

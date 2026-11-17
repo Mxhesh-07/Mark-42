@@ -1,3 +1,4 @@
+from agent import secrets_store
 import json
 import re
 import sys
@@ -11,7 +12,8 @@ def get_base_dir() -> Path:
 
 
 BASE_DIR        = get_base_dir()
-API_CONFIG_PATH = BASE_DIR / "config" / "api_keys.json"
+# API_CONFIG_PATH managed by secrets_store
+# API_CONFIG_PATH = BASE_DIR / "config" / "api_keys.json"
 
 
 def _think(kind: str, text: str) -> None:
@@ -178,8 +180,7 @@ OUTPUT — return ONLY valid JSON, no markdown, no explanation, no code blocks:
 
 
 def _get_api_key() -> str:
-    with open(API_CONFIG_PATH, "r", encoding="utf-8") as f:
-        return json.load(f)["gemini_api_key"]
+    return secrets_store.get_key("gemini_api_key")
 
 
 PLANNER_MODEL = "gemini-2.5-flash"

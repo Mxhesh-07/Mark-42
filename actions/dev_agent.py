@@ -1,3 +1,4 @@
+from agent import secrets_store
 # actions/dev_agent.py
 # AI-powered development agent — plans, builds, and debugs full projects.
 #
@@ -31,8 +32,7 @@ MODEL_WRITER       = "gemini-2.5-flash-lite"
 
 
 def _get_api_key() -> str:
-    with open(API_CONFIG_PATH, "r", encoding="utf-8") as f:
-        return json.load(f)["gemini_api_key"]
+    return secrets_store.get_key("gemini_api_key")
 
 
 def _get_model(model_name: str):
@@ -235,7 +235,6 @@ def _open_vscode(project_dir: Path) -> bool:
                 [cmd, str(project_dir)],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
-                shell=True  
             )
             time.sleep(2)
             print(f"[DevAgent] 💻 VSCode opened: {project_dir}")

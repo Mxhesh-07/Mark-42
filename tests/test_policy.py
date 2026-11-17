@@ -105,9 +105,10 @@ def test_file_controller_outside_the_roots_is_blocked(policy_file):
 
 # --- attended (live voice) vs unattended (background agent) gate --------------
 
-def test_a_soft_confirmation_is_satisfied_by_attendance(policy_file):
+def test_a_soft_confirmation_now_requires_approval(policy_file):
+    """Attendance is a reason to ask, not an approval: CONFIRM survives."""
     assert policy.evaluate("send_message", {"receiver": "a", "message_text": "b", "platform": "whatsapp"}).level is Level.CONFIRM
-    assert policy.evaluate_live("send_message", {"receiver": "a", "message_text": "b", "platform": "whatsapp"}).level is Level.ALLOW
+    assert policy.evaluate_live("send_message", {"receiver": "a", "message_text": "b", "platform": "whatsapp"}).level is Level.CONFIRM
 
 
 def test_a_soft_policy_block_is_satisfied_by_attendance(policy_file):
@@ -187,8 +188,11 @@ def test_evaluate_records_a_metric(policy_file):
     assert metrics.value("policy.decision", level="allow") >= 1
 
 
-def test_attendance_is_recorded(policy_file):
+def test_attendance_is_recorded_for_a_soft_block(policy_file):
     from agent import metrics
 
-    policy.evaluate_live("send_message", {"receiver": "a", "message_text": "b", "platform": "whatsapp"})
-    assert metrics.value("policy.attended", tool="send_message") == 1
+    # A soft block is still satisfied by attendance; a CONFIRM is not (it must
+    # be approved), so the metric is asserted on the block path.
+    decision = policy.evaluate_live("computer_settings", {"action": "shutdown"})
+    assert decision.level is Level.ALLOW
+    assert metrics.value("policy.attended", tool="computer_settings") == 1

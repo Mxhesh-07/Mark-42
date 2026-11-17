@@ -26,7 +26,7 @@ def test_next_unknown_id_fills_gaps_left_by_naming():
 
 
 def test_next_unknown_id_ignores_unrelated_keys():
-    assert _next_unknown_id({"Mahesh": {}, "UNK-005": {}}) == "UNK-001"
+    assert _next_unknown_id({"Alice": {}, "UNK-005": {}}) == "UNK-001"
 
 
 # --- best match across (possibly stale) voiceprints ---------------------------

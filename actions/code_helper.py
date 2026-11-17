@@ -1,3 +1,4 @@
+from agent import secrets_store
 # actions/code_helper.py
 # AI-powered code assistant — writes, edits, explains, runs, builds, debugs, and optimizes code.
 #
@@ -32,8 +33,7 @@ GEMINI_MODEL       = "gemini-2.5-flash"
 
 
 def _get_api_key() -> str:
-    with open(API_CONFIG_PATH, "r", encoding="utf-8") as f:
-        return json.load(f)["gemini_api_key"]
+    return secrets_store.get_key("gemini_api_key")
 
 
 def _get_gemini(model: str = GEMINI_MODEL):

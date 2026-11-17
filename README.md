@@ -262,6 +262,8 @@ by hand. `python -m agent.tool_contract --write` rewrites it, and CI
 | `smart_alert` | confirm | Configure and manage smart alerts. |
 | `spotify_control` | allow | Play music on Spotify app using system control. |
 | `startup_task` | confirm | Manages startup tasks and milestones. |
+| `switch_persona` | allow | Changes the protocol shown on the HUD: 'jarvis' (crimson, the default), 'friday' (amber, warmer and quicker)… |
+| `system_status` | allow | Reports the machine's measured state - CPU, RAM, disk, boot time and process count - and flags anything actua… |
 | `weather_report` | allow | Gets real-time weather information for a city. |
 | `web_search` | allow | Searches the web for any information. |
 | `work_task` | confirm | Work productivity: tasks, emails, documents, code snippets. |

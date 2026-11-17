@@ -18,9 +18,9 @@ def test_schema_is_created_and_versioned(store):
 
 
 def test_remember_and_recall(store):
-    store.remember("user.name", "Mahesh", source="user", confidence=0.9)
+    store.remember("user.name", "Alice", source="user", confidence=0.9)
     rec = store.recall("user.name")
-    assert rec["value"] == "Mahesh"
+    assert rec["value"] == "Alice"
     assert rec["source"] == "user"
     assert rec["confidence"] == pytest.approx(0.9)
 
@@ -81,10 +81,10 @@ def test_prune_drops_expired_records(store):
 
 
 def test_as_dict_returns_the_legacy_shape(store):
-    store.remember("user.name", "Mahesh")
+    store.remember("user.name", "Alice")
     store.remember("prefs", {"theme": "dark"})
     legacy = store.as_dict()
-    assert legacy["user.name"] == "Mahesh"
+    assert legacy["user.name"] == "Alice"
     assert legacy["prefs"] == {"theme": "dark"}
 
 

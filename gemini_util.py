@@ -56,8 +56,13 @@ from typing import Any, Callable, Optional, Sequence
 # Optional dependency on the agent package's circuit breaker (B1). Guarded so
 # gemini_util stays usable on its own (and when frozen) if the import fails.
 try:
+    from agent import secrets_store
     from agent import breaker as _breaker
 except Exception:  # pragma: no cover - standalone/frozen use
+    try:
+        from agent import secrets_store  # type: ignore
+    except Exception:
+        secrets_store = None  # type: ignore
     _breaker = None
 
 # --------------------------------------------------------------------------
@@ -614,7 +619,7 @@ async def _arun(call: Callable[[str], Any], requested: Optional[str],
 def api_key() -> str:
     path = Path(__file__).resolve().parent / "config" / "api_keys.json"
     with open(path, "r", encoding="utf-8") as f:
-        return json.load(f)["gemini_api_key"]
+        return secrets_store.get_key("gemini_api_key")
 
 
 def get_client():

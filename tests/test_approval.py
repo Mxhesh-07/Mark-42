@@ -112,3 +112,22 @@ def test_a_forged_token_is_counted_as_invalid():
     man["args_digest"] = "0" * 64
     assert approval.authorize(man, True)[0] is False
     assert metrics.value("approval", outcome="invalid") == 1
+
+
+def test_authorize_with_only_a_token_still_burns_the_nonce():
+    """The live spoken path holds the token, not the manifest dict.
+
+    If the nonce is not recovered from the token, ``authorize`` succeeds but the
+    code stays replayable - a silent hole in a single-use guarantee.
+    """
+    params = {"receiver": "a", "message_text": "b"}
+    man = approval.manifest("send_message", params)
+    partial = {
+        "token": man["token"],
+        "tool": man["tool"],
+        "args_digest": approval.digest("send_message", params),
+    }
+    assert approval.authorize(dict(partial), True)[0] is True
+    ok, why = approval.authorize(dict(partial), True)
+    assert ok is False
+    assert "already used" in why

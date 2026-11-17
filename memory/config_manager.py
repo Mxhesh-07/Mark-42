@@ -1,3 +1,4 @@
+from agent import secrets_store
 import json
 import sys
 from pathlib import Path

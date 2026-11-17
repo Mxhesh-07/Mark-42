@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#040608">
+  <meta name="apple-mobile-web-app-title" content="J.A.R.V.I.S.">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <title>J.A.R.V.I.S.</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Saira+Condensed:wght@300;400;500;600;700&family=Saira+Extra+Condensed:wght@100;200;300;600;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="jarvis.css">
+  <script type="importmap">
+    { "imports": { "three": "/vendor/three/three.module.js", "three/addons/": "/vendor/three-addons/" } }
+  </script>
+</head>
+<body>
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <defs>
+      <symbol id="i-cpu" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M9 1v3M15 1v3M9 20v3M15 20v3M20 9h3M20 14h3M1 9h3M1 14h3"/></symbol>
+      <symbol id="i-database" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></symbol>
+      <symbol id="i-activity" viewBox="0 0 24 24"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></symbol>
+      <symbol id="i-zap" viewBox="0 0 24 24"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></symbol>
+      <symbol id="i-wave" viewBox="0 0 24 24"><path d="M4 10v4M8 6v12M12 3v18M16 7v10M20 10v4"/></symbol>
+      <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></symbol>
+      <symbol id="i-list" viewBox="0 0 24 24"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></symbol>
+      <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></symbol>
+    </defs>
+  </svg>
+
+  <canvas id="orb"></canvas>
+  <div class="grid-floor"></div>
+  <div class="vignette"></div>
+  <div class="scanlines"></div>
+
+  <svg id="rings" viewBox="-100 -100 200 200" aria-hidden="true">
+    <circle r="66" class="r-faint"/>
+    <path class="r-cross" d="M -100 0 H -93 M 93 0 H 100 M 0 -100 V -93 M 0 93 V 100"/>
+    <g><circle r="76" class="r-dots"/><animateTransform attributeName="transform" type="rotate" from="0" to="360" dur="60s" repeatCount="indefinite"/></g>
+    <g><circle r="81" class="r-dash"/><animateTransform attributeName="transform" type="rotate" from="360" to="0" dur="40s" repeatCount="indefinite"/></g>
+    <g>
+      <path class="r-arc" d="M 0 -94 A 94 94 0 0 1 81.4 -47"/>
+      <path class="r-arc" d="M 0 94 A 94 94 0 0 1 -81.4 47"/>
+      <animateTransform attributeName="transform" type="rotate" from="0" to="360" dur="18s" repeatCount="indefinite"/>
+    </g>
+    <g>
+      <path class="r-arc thin" d="M -97 0 A 97 97 0 0 1 -68.6 -68.6"/>
+      <path class="r-arc thin" d="M 97 0 A 97 97 0 0 1 68.6 68.6"/>
+      <animateTransform attributeName="transform" type="rotate" from="360" to="0" dur="26s" repeatCount="indefinite"/>
+    </g>
+  </svg>
+
+  <div id="hud">
+    <header class="topbar">
+      <div class="brand">
+        <h1 class="glitch" data-text="J.A.R.V.I.S">J.A.R.V.I.S</h1>
+        <span>Just A Rather Very Intelligent System</span>
+      </div>
+      <div class="topline"></div>
+      <div class="clock">
+        <div id="time">--:--:--</div>
+        <div id="date">&mdash;</div>
+      </div>
+    </header>
+
+    <div id="panels">
+      <aside class="panel left">
+        <section class="sec" id="sec-diagnostics">
+          <div class="panel-title"><svg class="ico"><use href="#i-cpu"/></svg>Suit diagnostics</div>
+          <div class="pills">
+            <span class="pill" id="pill-core"><i></i>Core</span>
+            <span class="pill" id="pill-audio"><i></i>Audio</span>
+            <span class="pill" id="pill-link"><i></i>Uplink</span>
+          </div>
+          <div class="gauge">
+            <label>Voice <b id="mic-val">0%</b></label>
+            <div class="bar"><div id="mic-bar"></div></div>
+          </div>
+          <div class="gauge">
+            <label>CPU <b id="cpu-val">&mdash;</b></label>
+            <div class="bar"><div id="cpu-bar"></div></div>
+          </div>
+          <div class="gauge">
+            <label>Memory <b id="mem-val">&mdash;</b></label>
+            <div class="bar"><div id="mem-bar"></div></div>
+          </div>
+          <canvas id="cpu-spark" width="520" height="96" aria-hidden="true"></canvas>
+          <div class="kv"><span>Core</span><b id="core-model">Gemini Live</b></div>
+          <div class="kv"><span>Turns</span><b id="turns">0</b></div>
+          <div class="kv"><span>Uptime</span><b id="uptime">&mdash;</b></div>
+          <div class="kv"><span>Host</span><b id="host">&mdash;</b></div>
+        </section>
+
+        <section class="sec" id="sec-memory">
+          <div class="panel-title"><svg class="ico"><use href="#i-database"/></svg>Memory</div>
+          <div id="memory" class="board">&mdash;</div>
+        </section>
+
+        <section class="sec" id="sec-tasks">
+          <div class="panel-title"><svg class="ico"><use href="#i-list"/></svg>Task queue</div>
+          <ul id="tasks" class="bullets"></ul>
+        </section>
+      </aside>
+
+      <aside class="panel right">
+        <section class="sec" id="sec-agent">
+          <div class="panel-title"><svg class="ico"><use href="#i-shield"/></svg>Agent</div>
+          <div class="kv"><span>Unit</span><b id="agent-name">Planner</b></div>
+          <div class="kv"><span>State</span><b id="agent-state">IDLE</b></div>
+          <div class="kv"><span>Session</span><b id="session-state">CONNECTING</b></div>
+        </section>
+
+        <section class="sec" id="sec-actions">
+          <div class="panel-title"><svg class="ico"><use href="#i-activity"/></svg>Action log</div>
+          <ul id="actions"></ul>
+        </section>
+
+        <section class="sec" id="sec-protocols">
+          <div class="panel-title"><svg class="ico"><use href="#i-zap"/></svg>Quick protocols</div>
+          <div class="chips">
+            <button class="chip" data-cmd="Status report.">Status report</button>
+            <button class="chip" data-cmd="What can you do right now?">Capabilities</button>
+            <button class="chip" data-cmd="Give me my morning briefing.">Briefing</button>
+            <button class="chip" data-cmd="What's on my schedule today?">Schedule</button>
+            <button class="chip" data-cmd="Remember that the workshop lights are on channel three.">Remember</button>
+            <button class="chip" data-cmd="Clear the current task queue.">Clear queue</button>
+          </div>
+        </section>
+
+        <section class="sec" id="sec-network">
+          <div class="panel-title"><svg class="ico"><use href="#i-globe"/></svg>Telemetry</div>
+          <div class="kv"><span>Load</span><b id="load-val">&mdash;</b></div>
+          <div class="kv"><span>Processes</span><b id="procs-val">&mdash;</b></div>
+          <div class="kv"><span>GPU</span><b id="gpu-val">&mdash;</b></div>
+          <div class="kv"><span>Battery</span><b id="batt-val">&mdash;</b></div>
+        </section>
+      </aside>
+    </div>
+
+    <div id="status"><span class="dot"></span><span id="status-text">STANDING BY</span></div>
+
+    <section id="log" aria-live="polite"></section>
+
+    <footer class="console">
+      <button id="mic" class="mic" title="Mute / unmute the microphone (M)">
+        <svg viewBox="0 0 24 24"><path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-2.08A7 7 0 0 0 19 12h-2Z"/></svg>
+      </button>
+      <form id="form" autocomplete="off">
+        <input id="input" placeholder="Speak or type a command&hellip;" aria-label="Command">
+        <button class="send" type="submit">Execute</button>
+      </form>
+      <button id="stop" class="stop" type="button" title="Stop speaking (Esc)">Stop</button>
+      <div class="hints">ENTER send &middot; ESC stop &middot; M mute</div>
+    </footer>
+  </div>
+
+  <div id="boot">
+    <div class="boot-core">
+      <div class="boot-reactor"><i></i><i></i><i></i></div>
+      <div class="boot-title">J.A.R.V.I.S</div>
+      <div class="boot-sub">MARK XXX &middot; HYBRID CORE</div>
+      <div class="boot-log" id="boot-log"></div>
+    </div>
+  </div>
+
+  <div id="confirm" aria-hidden="true">
+    <div class="cx-panel sec" role="dialog" aria-modal="true" aria-labelledby="cx-summary">
+      <div class="panel-title"><svg class="ico"><use href="#i-shield"/></svg>Approval required</div>
+      <p id="cx-summary" class="cx-summary"></p>
+      <div id="cx-detail" class="cx-detail"></div>
+      <div id="cx-buttons" class="cx-buttons"></div>
+      <div class="cx-foot">
+        <span class="cx-timer"><b id="cx-timer">30</b>s to decide</span>
+        <span class="cx-hint">Nothing happens without your OK &middot; ESC denies</span>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast"></div>
+  <script type="module" src="jarvis.js"></script>
+</body>
+</html>

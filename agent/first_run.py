@@ -11,6 +11,8 @@ is a plain function, and no device is opened until the user asks for the meter.
 
 from __future__ import annotations
 
+from agent import secrets_store
+
 import json
 import os
 import sys

@@ -29,5 +29,5 @@ echo "  2. Copy config files to ~/jarvis-cloud/config/"
 echo "  3. Run: python3 ~/jarvis-cloud/cloud_jarvis.py"
 
 echo "=========================================="
-echo "  Setup complete, sir."
+echo "  Setup complete."
 echo "=========================================="

@@ -191,6 +191,76 @@ def run_python_file(
     return subprocess.CompletedProcess(process.args, process.returncode, stdout, stderr)
 
 
+def run_argv(
+    argv,
+    *,
+    timeout: int = DEFAULT_TIMEOUT_S,
+    cwd=None,
+    memory_mb: int | None = DEFAULT_MEMORY_MB,
+    max_processes: int = 8,
+    extra_env: dict | None = None,
+    encoding: str | None = None,
+) -> subprocess.CompletedProcess:
+    """Run a command in a restricted child. Raises on timeout.
+
+    The same constraints as :func:`run_python_file` — no credential-looking
+    environment variables, optional scratch cwd, Windows job limits — applied to
+    an arbitrary argv. Shell semantics stay in the caller's argv (``cmd /c``,
+    ``sh -c``); what changes is that the child can no longer read the assistant's
+    secrets or outlive its job.
+    """
+    if not argv:
+        raise ValueError("run_argv needs a command")
+    job = _create_job(memory_mb, max_processes)
+    process = subprocess.Popen(
+        [str(part) for part in argv],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding=encoding,
+        errors="replace",
+        cwd=str(cwd) if cwd else None,
+        env=restricted_env(extra_env),
+    )
+    if job:
+        _assign_to_job(job, process)
+    try:
+        stdout, stderr = process.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        try:
+            process.kill()
+            process.communicate(timeout=10)
+        except Exception:
+            pass
+        if job:
+            _close_job(job)
+        raise
+    finally:
+        if job:
+            _close_job(job)
+    return subprocess.CompletedProcess(process.args, process.returncode, stdout, stderr)
+
+
+def spawn_argv(argv, *, cwd=None, extra_env: dict | None = None,
+               creationflags: int = 0):
+    """Start a detached GUI process with the restricted environment.
+
+    No job object here: the child is an app the user asked to open and must be
+    allowed to outlive the request. Secrets are still stripped and the caller
+    supplies an argv, never a shell string.
+    """
+    if not argv:
+        raise ValueError("spawn_argv needs a command")
+    return subprocess.Popen(
+        [str(part) for part in argv],
+        cwd=str(cwd) if cwd else None,
+        env=restricted_env(extra_env),
+        creationflags=creationflags,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+
 def status() -> dict:
     return {
         "restricted_env": True,

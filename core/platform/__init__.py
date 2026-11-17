@@ -12,11 +12,11 @@ import sys
 
 if sys.platform == "win32":
     from core.platform.win import (  # noqa: F401
-        beep, get_master_volume, is_windows, notify, set_master_volume,
-        set_mic_level,
+        beep, get_master_volume, is_windows, mic_muted, notify,
+        set_master_volume, set_mic_level, unmute_mic,
     )
 else:
     from core.platform.base import (  # noqa: F401
-        beep, get_master_volume, is_windows, notify, set_master_volume,
-        set_mic_level,
+        beep, get_master_volume, is_windows, mic_muted, notify,
+        set_master_volume, set_mic_level, unmute_mic,
     )

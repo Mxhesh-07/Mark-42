@@ -85,6 +85,17 @@ TOOL_DECLARATIONS = [
         "parameters": {"type": "OBJECT", "properties": {}}
     },
     {
+        "name": "system_status",
+        "description": (
+            "Reports the machine's measured state - CPU, RAM, disk, boot time and "
+            "process count - and flags anything actually running hot. Use it when "
+            "the user asks how the system is doing, whether anything is wrong, or "
+            "for a status report. It reports only what it can measure; if metrics "
+            "are unavailable it says so instead of claiming the system is healthy."
+        ),
+        "parameters": {"type": "OBJECT", "properties": {}}
+    },
+    {
         "name": "devices",
         "description": (
             "Talks to your other devices (phone, laptop, tablet...) registered in "
@@ -581,7 +592,7 @@ TOOL_DECLARATIONS = [
                 "name": {
                     "type": "STRING",
                     "description": (
-                        "Name to associate with the voice (e.g. 'Mahesh'). "
+                        "Name to associate with the voice (e.g. 'Alex'). "
                         "Optional — omit it to use the user's configured name."
                     )
                 }
@@ -694,6 +705,28 @@ TOOL_DECLARATIONS = [
             "value": {"type": "BOOLEAN", "description": "For rotate: true = auto-rotate, false = stop"}
         },
         "required": ["action"]
+    }
+},
+{
+    "name": "switch_persona",
+    "description": (
+        "Changes the protocol shown on the HUD: 'jarvis' (crimson, the default), "
+        "'friday' (amber, warmer and quicker) or 'ultron' (hard red, hostile). "
+        "The whole board morphs into the new palette. Use it when the user asks "
+        "to switch assistant, change protocol, or names one of those three. This "
+        "changes the interface only - not how you behave or speak - so never "
+        "claim it changed your personality."
+    ),
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "name": {
+                "type": "STRING",
+                "enum": ["jarvis", "friday", "ultron"],
+                "description": "Protocol to display on the HUD."
+            }
+        },
+        "required": ["name"]
     }
 }
 ]

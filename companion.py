@@ -18,8 +18,15 @@ _lock = Lock()
 _greeting_cooldown = {}
 
 
-def check_in(user_name: str = "Mahesh") -> str | None:
-    """Proactive check-in if user hasn't spoken recently."""
+def check_in(user_name: str | None = None) -> str | None:
+    """Proactive check-in if user hasn't spoken recently.
+
+    The name is optional. A fresh install has not learned it yet, and the
+    greeting must read naturally without one — and must never fall back to a
+    hardcoded name or a title.
+    """
+    user_name = str(user_name or "").strip()
+    address = f", {user_name}" if user_name else ""
     now = datetime.now()
     last = _greeting_cooldown.get(user_name)
     if last:
@@ -32,24 +39,24 @@ def check_in(user_name: str = "Mahesh") -> str | None:
     hour = now.hour
     if 6 <= hour < 12:
         greetings = [
-            f"Good morning, {user_name}. I trust you slept well?",
-            f"Morning, {user_name}. Your coffee is ready — metaphorically speaking.",
-            f"Rise and shine, {user_name}. What's on your mind today?",
+            f"Good morning{address}. I trust you slept well?",
+            "Morning. Your coffee is ready — metaphorically speaking.",
+            "Rise and shine. What's on your mind today?",
         ]
     elif 12 <= hour < 18:
         greetings = [
-            f"Good afternoon, {user_name}. How's your day going?",
-            f"Hey, {user_name}. Anything I can help with?",
+            f"Good afternoon{address}. How's your day going?",
+            "Anything I can help with?",
         ]
     elif 18 <= hour < 22:
         greetings = [
-            f"Good evening, {user_name}. I hope your day was productive.",
-            f"Evening, {user_name}. Relax — I've got things covered.",
+            f"Good evening{address}. I hope your day was productive.",
+            "Evening. Relax — I've got things covered.",
         ]
     else:
         greetings = [
-            f"Working late, {user_name}? Don't push yourself too hard.",
-            f"Still up, {user_name}? Burn the midnight oil if you must.",
+            "Working late? Don't push yourself too hard.",
+            "Still up? Burn the midnight oil if you must.",
         ]
 
     return random.choice(greetings)
@@ -113,7 +120,7 @@ def respond_with_emotion(emotion: str, base_response: str = "") -> str:
     return prefix + base_response if prefix else base_response
 
 
-def remember_experience(description: str, user_name: str = "Mahesh") -> None:
+def remember_experience(description: str, user_name: str = "") -> None:
     """Store a shared experience for future reference."""
     EXPERIENCES_PATH.parent.mkdir(parents=True, exist_ok=True)
     with _lock:
@@ -172,7 +179,8 @@ def personal_joke() -> str:
 def companion_response(context: dict) -> str:
     """Generate a companion-style response."""
     text = context.get("text", "")
-    user_name = context.get("name", "Mahesh")
+    user_name = str(context.get("name") or "").strip()
+    address = f", {user_name}" if user_name else ""
     emotion = detect_emotion(text)
 
     if emotion != "neutral":
@@ -189,7 +197,7 @@ def companion_response(context: dict) -> str:
 
     if "how are you" in text.lower():
         responses = [
-            f"Running at peak efficiency, as always. More importantly — how are you, {user_name}?",
+            f"Running at peak efficiency, as always. More importantly — how are you{address}?",
             "All systems nominal. But I'm more interested in how your day is going.",
             "Excellent, now that you're here. What can I do for you?",
         ]

@@ -28,6 +28,16 @@ def _p(name, shape, size, pos, color="cyan", hot=False, axis="y", dir=None, rot=
     return d
 
 
+def _lf(name, sections, pos, color="cyan", hot=False, rot=None):
+    """Smooth lofted part. Sections are [local_y, rx, rz, cx, cz]."""
+    ex = max(abs(c[3]) + c[1] for c in sections)
+    ey = max(abs(c[0]) for c in sections)
+    ez = max(abs(c[4]) + c[2] for c in sections)
+    d = _p(name, "loft", [ex * 2, ey * 2, ez * 2], pos, color, hot, rot=rot)
+    d["sections"] = [[float(v) for v in c] for c in sections]
+    return d
+
+
 def _m(name, kind, parts, explode=None):
     m = {"name": name, "kind": kind, "parts": parts}
     if explode:
@@ -43,14 +53,52 @@ def _wheel(name, pos, r=0.42, h=0.34):
 #  VEHICLES
 # ==========================================================================
 def car():
-    p = [_p("Body", "box", [4.4, 0.9, 1.9], [0, 0.95, 0]),
-         _p("Cabin", "box", [2.2, 0.8, 1.7], [-0.2, 1.7, 0]),
-         _p("Windshield", "box", [0.12, 0.7, 1.6], [-1.32, 1.7, 0], "white", True),
-         _wheel("Wheel FL", [1.5, 0.45, 1.0]), _wheel("Wheel FR", [1.5, 0.45, -1.0]),
-         _wheel("Wheel RL", [-1.5, 0.45, 1.0]), _wheel("Wheel RR", [-1.5, 0.45, -1.0]),
-         _p("Headlight L", "box", [0.12, 0.24, 0.4], [2.2, 0.95, 0.6], "white", True),
-         _p("Headlight R", "box", [0.12, 0.24, 0.4], [2.2, 0.95, -0.6], "white", True),
-         _p("Spoiler", "box", [0.2, 0.35, 1.7], [-2.2, 1.35, 0])]
+    """Low, wedge-profile sports car: sloped glazing, rims, aero and lighting."""
+    p = [
+        _p("Chassis", "box", [4.5, 0.4, 1.9], [0, 0.55, 0], "gray"),
+        _p("Body", "box", [4.2, 0.7, 1.88], [0, 0.95, 0]),
+        _p("Hood", "box", [1.75, 0.26, 1.8], [1.35, 1.32, 0], rot=[0, 0, -6]),
+        _p("Nose", "box", [0.5, 0.45, 1.7], [2.15, 1.05, 0], rot=[0, 0, -12]),
+        _p("Cabin", "box", [2.0, 0.55, 1.65], [-0.35, 1.55, 0]),
+        _p("Roof", "box", [1.5, 0.16, 1.45], [-0.6, 1.92, 0], rot=[0, 0, -4]),
+        _p("Windshield", "box", [0.13, 0.68, 1.55], [0.7, 1.68, 0], "white", True, rot=[0, 0, -26]),
+        _p("Rear Glass", "box", [0.12, 0.52, 1.45], [-1.42, 1.7, 0], "white", True, rot=[0, 0, 28]),
+        _p("Side Glass L", "box", [1.25, 0.42, 0.08], [-0.35, 1.7, 0.85], "white", True),
+        _p("Side Glass R", "box", [1.25, 0.42, 0.08], [-0.35, 1.7, -0.85], "white", True),
+        _p("Splitter", "box", [0.45, 0.1, 2.0], [2.4, 0.5, 0], "gray"),
+        _p("Skirt L", "box", [2.9, 0.12, 0.16], [0, 0.52, 0.98], "gray"),
+        _p("Skirt R", "box", [2.9, 0.12, 0.16], [0, 0.52, -0.98], "gray"),
+        _p("Diffuser", "box", [0.45, 0.3, 1.75], [-2.35, 0.6, 0], "gray"),
+    ]
+    for tag, x, z in (("FL", 1.55, 1.02), ("FR", 1.55, -1.02),
+                      ("RL", -1.55, 1.02), ("RR", -1.55, -1.02)):
+        side = 1 if z > 0 else -1
+        p.append(_p(f"Wheel {tag}", "cyl", [0.46, 0.3], [x, 0.55, z], "gray", axis="x"))
+        p.append(_p(f"Rim {tag}", "torus", [0.3, 0.055], [x, 0.55, z + side * 0.16],
+                    axis="x"))
+        p.append(_p(f"Hub {tag}", "cyl", [0.16, 0.32], [x, 0.55, z], "white", True, axis="x"))
+    p += [
+        _p("Headlight L", "box", [0.1, 0.16, 0.5], [2.42, 1.02, 0.62], "white", True),
+        _p("Headlight R", "box", [0.1, 0.16, 0.5], [2.42, 1.02, -0.62], "white", True),
+        _p("Taillight L", "box", [0.1, 0.13, 0.55], [-2.42, 1.05, 0.6], "red"),
+        _p("Taillight R", "box", [0.1, 0.13, 0.55], [-2.42, 1.05, -0.6], "red"),
+        _p("Grille", "box", [0.1, 0.3, 1.05], [2.45, 0.82, 0], "gray"),
+        _p("Mirror L", "box", [0.28, 0.13, 0.22], [0.65, 1.62, 1.02]),
+        _p("Mirror R", "box", [0.28, 0.13, 0.22], [0.65, 1.62, -1.02]),
+        _p("Intake L", "box", [0.55, 0.2, 0.1], [-0.95, 0.95, 0.95], "gray"),
+        _p("Intake R", "box", [0.55, 0.2, 0.1], [-0.95, 0.95, -0.95], "gray"),
+        _p("Spoiler", "box", [0.22, 0.09, 1.7], [-2.25, 1.55, 0]),
+        _p("Spoiler Strut L", "box", [0.1, 0.4, 0.1], [-2.25, 1.35, 0.7], "gray"),
+        _p("Spoiler Strut R", "box", [0.1, 0.4, 0.1], [-2.25, 1.35, -0.7], "gray"),
+    ]
+    # Gunmetal shell + cyan energy, matching the armour projector.
+    for part in p:
+        if part["name"].startswith("Rim"):
+            part["color"] = "cyan"
+        elif part["color"] in ("cyan", "red"):
+            part["color"] = "gunmetal"
+        elif part["color"] == "gray":
+            part["color"] = "steel"
     return _m("Car", "vehicle", p, 2.6)
 
 
@@ -745,35 +793,78 @@ def star():
 
 
 def suit():
+    """Mark-style armour built from smooth lofted anatomy, not stacked boxes."""
+    # Sections: [local_y, radius_x, radius_z, offset_x, offset_z]
+    torso = [[-1.95, 0.72, 0.52, 0, 0], [-1.45, 0.92, 0.62, 0, 0],
+             [-0.95, 0.82, 0.56, 0, 0], [-0.35, 1.02, 0.70, 0, 0],
+             [0.35, 1.32, 0.84, 0, 0], [0.85, 1.40, 0.78, 0, 0],
+             [1.25, 1.05, 0.66, 0, 0], [1.85, 0.42, 0.40, 0, 0]]
+    helmet = [[-0.95, 0.42, 0.48, 0, -0.06], [-0.65, 0.68, 0.74, 0, 0],
+              [-0.25, 0.92, 1.00, 0, 0], [0.30, 1.08, 1.14, 0, 0],
+              [0.70, 0.92, 1.00, 0, 0], [0.95, 0.58, 0.68, 0, 0]]
+    face = [[-0.45, 0.55, 0.16, 0, 0], [0.00, 0.68, 0.20, 0, 0],
+            [0.45, 0.58, 0.16, 0, 0]]
+    shoulder = [[-0.42, 0.40, 0.48, 0, 0], [0.00, 0.54, 0.60, 0, 0],
+                [0.42, 0.44, 0.50, 0, 0]]
+    upper_arm = [[-1.00, 0.26, 0.26, 0, 0], [-0.55, 0.33, 0.33, 0, 0],
+                 [0.05, 0.39, 0.39, 0, 0], [0.60, 0.44, 0.44, 0, 0],
+                 [1.00, 0.36, 0.36, 0, 0]]
+    forearm = [[-0.95, 0.25, 0.25, 0, 0], [-0.45, 0.34, 0.34, 0, 0],
+               [0.15, 0.39, 0.39, 0, 0], [0.65, 0.36, 0.36, 0, 0],
+               [0.95, 0.30, 0.30, 0, 0]]
+    hand = [[-0.38, 0.26, 0.24, 0, 0], [0.00, 0.34, 0.30, 0, 0],
+            [0.38, 0.28, 0.26, 0, 0]]
+    thigh = [[-1.10, 0.32, 0.34, 0, 0], [-0.55, 0.42, 0.44, 0, 0],
+             [0.25, 0.54, 0.56, 0, 0], [0.85, 0.50, 0.52, 0, 0],
+             [1.10, 0.43, 0.45, 0, 0]]
+    knee = [[-0.32, 0.34, 0.38, 0, 0], [0.00, 0.44, 0.48, 0, 0],
+            [0.32, 0.36, 0.40, 0, 0]]
+    shin = [[-1.15, 0.28, 0.30, 0, 0], [-0.60, 0.37, 0.39, 0, 0],
+            [0.20, 0.46, 0.48, 0, 0], [0.80, 0.40, 0.42, 0, 0],
+            [1.15, 0.33, 0.35, 0, 0]]
+    boot = [[-0.50, 0.40, 0.52, 0, 0.18], [-0.25, 0.44, 0.72, 0, 0.05],
+            [0.25, 0.40, 0.55, 0, -0.08], [0.50, 0.34, 0.40, 0, -0.10]]
+
     p = [
-        _p("Helmet", "sphere", [1.35, 1.55, 1.35], [0, 7.95, 0], "red"),
-        _p("Faceplate", "box", [1.5, 1.15, 0.55], [0, 7.85, 1.02], "gold", dir=[0, 0.25, 1]),
-        _p("Eye L", "box", [0.46, 0.14, 0.12], [-0.42, 8.12, 1.46], "white", True, dir=[-0.5, 0.2, 1]),
-        _p("Eye R", "box", [0.46, 0.14, 0.12], [0.42, 8.12, 1.46], "white", True, dir=[0.5, 0.2, 1]),
-        _p("Neck", "cyl", [0.5, 0.9], [0, 6.6, 0], "gold"),
-        _p("Chest Plate", "box", [3.1, 3.3, 1.7], [0, 4.9, 0], "red"),
-        _p("Arc Reactor", "cyl", [0.5, 0.28], [0, 5.35, 0.92], "white", True, axis="z", dir=[0, 0.15, 1]),
-        _p("Abdomen", "box", [2.2, 1.7, 1.35], [0, 2.85, 0], "red"),
-        _p("Pelvis", "box", [2.7, 1.5, 1.6], [0, 1.5, 0], "red"),
-        _p("Spine", "box", [1.4, 3.0, 0.6], [0, 3.9, -0.72], "gold", dir=[0, 0.2, -1]),
-        _p("Back Thruster", "box", [1.7, 2.5, 0.55], [0, 4.9, -1.05], "gold", dir=[0, 0.3, -1]),
-        _p("Shoulder L", "sphere", [0.72, 0.72, 0.72], [-1.95, 5.7, 0], "red"),
-        _p("Shoulder R", "sphere", [0.72, 0.72, 0.72], [1.95, 5.7, 0], "red"),
-        _p("Upper Arm L", "cyl", [0.42, 2.3], [-2.05, 4.15, 0], "red"),
-        _p("Upper Arm R", "cyl", [0.42, 2.3], [2.05, 4.15, 0], "red"),
-        _p("Forearm L", "cyl", [0.4, 2.1], [-2.05, 2.15, 0], "red"),
-        _p("Forearm R", "cyl", [0.4, 2.1], [2.05, 2.15, 0], "red"),
-        _p("Gauntlet L", "box", [0.85, 1.05, 0.75], [-2.05, 0.75, 0], "red"),
-        _p("Gauntlet R", "box", [0.85, 1.05, 0.75], [2.05, 0.75, 0], "red"),
-        _p("Thigh L", "cyl", [0.6, 2.7], [-0.95, -0.7, 0], "red"),
-        _p("Thigh R", "cyl", [0.6, 2.7], [0.95, -0.7, 0], "red"),
-        _p("Knee L", "sphere", [0.52, 0.52, 0.52], [-0.95, -2.1, 0], "gold"),
-        _p("Knee R", "sphere", [0.52, 0.52, 0.52], [0.95, -2.1, 0], "gold"),
-        _p("Shin L", "cyl", [0.48, 2.7], [-0.95, -3.6, 0], "red"),
-        _p("Shin R", "cyl", [0.48, 2.7], [0.95, -3.6, 0], "red"),
-        _p("Boot L", "box", [1.15, 1.05, 2.1], [-0.95, -5.55, 0.35], "red"),
-        _p("Boot R", "box", [1.15, 1.05, 2.1], [0.95, -5.55, 0.35], "red"),
+        _lf("Torso", torso, [0, 4.45, 0], "red"),
+        _lf("Helmet", helmet, [0, 7.95, 0], "red"),
+        _lf("Faceplate", face, [0, 7.85, 0.86], "gold"),
+        _p("Brow", "box", [1.4, 0.12, 0.28], [0, 8.32, 0.98], "gold", rot=[-10, 0, 0]),
+        _p("Eye L", "box", [0.5, 0.10, 0.12], [-0.38, 8.08, 1.06], "white", True, dir=[-0.35, 0.1, 1]),
+        _p("Eye R", "box", [0.5, 0.10, 0.12], [0.38, 8.08, 1.06], "white", True, dir=[0.35, 0.1, 1]),
+        _p("Cheek L", "box", [0.22, 0.35, 0.24], [-0.70, 7.6, 0.84], "gold"),
+        _p("Cheek R", "box", [0.22, 0.35, 0.24], [0.70, 7.6, 0.84], "gold"),
+        _p("Mouth Vent", "box", [0.38, 0.14, 0.10], [0, 7.42, 1.02], "gray"),
+        _p("Arc Reactor", "cyl", [0.4, 0.2], [0, 5.72, 0.90], "white", True, axis="z", dir=[0, 0.15, 1]),
+        _p("Reactor Ring", "torus", [0.52, 0.07], [0, 5.72, 0.86], "gold", axis="z"),
+        _p("Waist Band", "cyl", [0.98, 0.14], [0, 3.90, 0], "gold"),
+        _p("Spine", "box", [0.7, 1.8, 0.28], [0, 4.9, -0.66], "gold"),
+        _p("Thruster L", "cyl", [0.20, 0.5], [-0.55, 5.0, -0.82], "white", True, axis="z", dir=[0, 0, -1]),
+        _p("Thruster R", "cyl", [0.20, 0.5], [0.55, 5.0, -0.82], "white", True, axis="z", dir=[0, 0, -1]),
     ]
+    for side, s in (("L", -1), ("R", 1)):
+        p += [
+            _lf(f"Shoulder {side}", shoulder, [s * 1.95, 6.12, 0], "red", rot=[0, 0, s * 14]),
+            _p(f"Deltoid Band {side}", "cyl", [0.44, 0.12], [s * 2.0, 5.72, 0], "gold"),
+            _lf(f"Upper Arm {side}", upper_arm, [s * 2.08, 4.65, 0], "red", rot=[0, 0, s * 4]),
+            _p(f"Elbow {side}", "sphere", [0.34, 0.34, 0.34], [s * 2.1, 3.55, 0], "gold"),
+            _lf(f"Forearm {side}", forearm, [s * 2.12, 2.55, 0], "red"),
+            _lf(f"Hand {side}", hand, [s * 2.12, 0.68, 0], "gold"),
+            _p(f"Repulsor {side}", "cyl", [0.2, 0.12], [s * 2.12, 1.35, 0.34], "white", True, axis="z"),
+            _p(f"Hip {side}", "sphere", [0.42, 0.42, 0.42], [s * 0.85, 2.65, 0], "gold"),
+            _lf(f"Thigh {side}", thigh, [s * 0.9, 1.55, 0], "red"),
+            _lf(f"Knee {side}", knee, [s * 0.92, 0.32, 0], "gold"),
+            _p(f"Knee Band {side}", "cyl", [0.42, 0.12], [s * 0.92, 0.32, 0], "gold"),
+            _lf(f"Shin {side}", shin, [s * 0.95, -1.0, 0], "red"),
+            _p(f"Ankle {side}", "sphere", [0.32, 0.32, 0.32], [s * 0.95, -2.3, 0], "gold"),
+            _lf(f"Boot {side}", boot, [s * 0.95, -2.85, 0.3], "red"),
+        ]
+    # Gunmetal shell + cyan energy: only the hot parts stay emissive cyan.
+    for part in p:
+        if part["color"] == "red":
+            part["color"] = "gunmetal"
+        elif part["color"] in ("gold", "gray"):
+            part["color"] = "steel"
     return _m("Iron Man Suit", "armour", p, 6.5)
 
 

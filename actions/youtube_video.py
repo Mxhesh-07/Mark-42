@@ -1,3 +1,4 @@
+from agent import secrets_store
 # actions/youtube_video.py
 # MARK XXV — YouTube Controller
 #
@@ -40,7 +41,8 @@ def get_base_dir() -> Path:
 
 
 BASE_DIR        = get_base_dir()
-API_CONFIG_PATH = BASE_DIR / "config" / "api_keys.json"
+# API_CONFIG_PATH managed by secrets_store
+# API_CONFIG_PATH = BASE_DIR / "config" / "api_keys.json"
 
 HEADERS = {
     "User-Agent": (
@@ -53,8 +55,7 @@ HEADERS = {
 
 
 def _get_api_key() -> str:
-    with open(API_CONFIG_PATH, "r", encoding="utf-8") as f:
-        return json.load(f)["gemini_api_key"]
+    return secrets_store.get_key("gemini_api_key")
 
 
 def open_browser():
@@ -509,8 +510,8 @@ def youtube_video(
 
     try:
         if action == "play":
-            return handler(params, player) or "Done."
-        return handler(params, player, speak) or "Done."
+            return handler(params, player) or f"YouTube {action} requested; no confirmation returned."
+        return handler(params, player, speak) or f"YouTube {action} requested; no confirmation returned."
 
     except Exception as e:
         print(f"[YouTube] ❌ Error in {action}: {e}")

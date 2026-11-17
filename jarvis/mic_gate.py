@@ -1,16 +1,15 @@
 """Tier 1.6 — the microphone noise gate, out of main.py.
 
-The gate keeps a chunk if *either* detector says speech: webrtcvad's verdict or
-the chunk RMS relative to a tracked room-noise floor. The union means real speech
-is never dropped because one detector was unsure, while both stay quiet on pure
-noise.
+The gate keeps a chunk when the energy clearly rises above the recent ambient
+level, or when webrtcvad hears speech *and* the energy clears the hold bar. The
+energy bar is what makes webrtcvad safe to use: on a hot microphone it flags most
+room noise as speech, so its verdict must never open the gate on its own.
 
-The floor is a low percentile of recent *muted* chunk levels (not a running
-mean): a cough, a door or the keyboard are brief bursts and must not drag the
-floor up, and the clamp stops a genuinely loud room from raising the threshold
-beyond normal speech. Opening is instant so the first word is never lost, and the
-gate stays open `hangover_s` past the last speech frame so word tails are never
-clipped.
+The ambient level is an upper percentile of recent non-speech chunks (not a
+running mean): a cough, a door or the keyboard is a brief burst a high percentile
+ignores, while a sustained fan or air-conditioning is captured instead of being
+mistaken for speech. It is learned even while the gate is open, so a gate that
+opened on a burst can recover instead of latching open.
 """
 
 from __future__ import annotations
@@ -27,10 +26,10 @@ class MicGate:
         open_factor: float = 1.9,
         hold_factor: float = 1.3,
         hangover_s: float = 0.35,
-        percentile: float = 25,
+        percentile: float = 75,
         window: int = 90,
         min_floor: float = 65.0,
-        max_floor: float = 125.0,
+        max_floor: float = 180.0,
         clock=time.time,
     ):
         self.open_factor = float(open_factor)
@@ -64,8 +63,19 @@ class MicGate:
         self.floor = floor
 
         threshold = gate_factor if gate_factor is not None else self.open_factor
-        rms_speech = rms > floor * (self.hold_factor if self.open else threshold)
-        speak_now = rms_speech or bool(vad_speech)
+        # Do not lower the energy bar just because the gate is already open: a
+        # hold multiple below the ambient p90 lets ordinary noise keep the gate
+        # open forever. Word tails are covered by the hangover; the lower bar is
+        # reserved for webrtcvad, whose verdict is independent evidence.
+        rms_speech = rms > floor * threshold
+        # webrtcvad may lower the bar for quiet speech, but never to zero
+        # energy. On a hot microphone it calls most room noise "speech" (measured
+        # here: 70-82% of silent frames at aggression 1), so its verdict alone
+        # must not open the gate.
+        had_vad = vad_speech is not None
+        vad_speech = bool(vad_speech)
+        vad_opens = vad_speech and rms > floor * self.hold_factor
+        speak_now = rms_speech or vad_opens
 
         if speak_now:
             self.open = True
@@ -73,8 +83,13 @@ class MicGate:
         elif not (self.open and now - self.last_speech <= self.hangover_s):
             self.open = False
 
-        if not self.open:
-            # Learn the floor only while muted, so speech cannot lift it.
+        # Learn the ambient level from chunks webrtcvad says are not speech, even
+        # while the gate is open. Otherwise a gate that opened on a burst latches
+        # open forever: the floor is never corrected, and the hold threshold stays
+        # below the room's own noise. Without webrtcvad, fall back to learning
+        # whenever the chunk was not counted as speech.
+        learn = (not vad_speech) if had_vad else (not speak_now)
+        if learn:
             self.window.append(rms)
             if len(self.window) > self.window_size:
                 del self.window[:-self.window_size]

@@ -1,3 +1,4 @@
+from agent import secrets_store
 """
 actions/screen_processor.py — Gemini Live API — IMAGE-ONLY SESSION v8
 """
@@ -32,8 +33,8 @@ def get_base_dir():
     return Path(__file__).resolve().parent.parent
 
 BASE_DIR        = get_base_dir()
-API_CONFIG_PATH = BASE_DIR / "config" / "api_keys.json"
-
+# API_CONFIG_PATH managed by secrets_store
+# 
 LIVE_MODEL          = "models/gemini-2.5-flash-native-audio-preview-12-2025"
 FORMAT              = pyaudio.paInt16
 CHANNELS            = 1
@@ -55,16 +56,21 @@ SYSTEM_PROMPT = (
 )
 
 def _get_api_key() -> str:
-    with open(API_CONFIG_PATH, "r", encoding="utf-8") as f:
-        return json.load(f)["gemini_api_key"]
+    return secrets_store.get_key("gemini_api_key")
 
 def _get_camera_index() -> int:
     try:
-        with open(API_CONFIG_PATH, "r", encoding="utf-8") as f:
-            cfg = json.load(f)
-        if "camera_index" in cfg:
+        from agent import secrets_store
+        val = secrets_store.load().get("camera_index")
+        if val is not None:
+            return int(val)
+    except Exception:
+        pass
+    try:
+        cfg = secrets_store.load()
+        if cfg.get("camera_index") is not None:
             return int(cfg["camera_index"])
-    except:
+    except Exception:
         pass
 
     best_index = 0
@@ -77,18 +83,13 @@ def _get_camera_index() -> int:
                 best_index = idx
                 break
 
-    cfg = {}
-    if API_CONFIG_PATH.exists():
-        try:
-            with open(API_CONFIG_PATH, "r", encoding="utf-8") as f:
-                cfg = json.load(f)
-        except Exception:
-            # Never overwrite a config we could not read (would wipe gemini_api_key)
-            return best_index
-
-    cfg["camera_index"] = best_index
-    with open(API_CONFIG_PATH, "w", encoding="utf-8") as f:
-        json.dump(cfg, f, indent=4)
+    try:
+        from agent import secrets_store
+        cfg = secrets_store.load()
+        cfg["camera_index"] = best_index
+        secrets_store.save(cfg)
+    except Exception:
+        pass
 
     return best_index
 

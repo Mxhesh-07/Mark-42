@@ -81,3 +81,55 @@ def test_python_is_the_interpreter_used(tmp_path):
     script.write_text("import sys\nprint(sys.executable)\n", encoding="utf-8")
     result = subprocess_sandbox.run_python_file(script, timeout=60)
     assert os.path.basename(sys.executable) in result.stdout
+
+
+# --- run_argv / spawn_argv: the same containment for shell commands ----------
+
+def test_run_argv_captures_output_and_exit_code():
+    result = subprocess_sandbox.run_argv(
+        [sys.executable, "-c", "import sys; print('ok'); sys.exit(3)"], timeout=60
+    )
+    assert result.stdout.strip() == "ok"
+    assert result.returncode == 3
+
+
+def test_run_argv_strips_credentials(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "super-secret-value")
+    result = subprocess_sandbox.run_argv(
+        [sys.executable, "-c",
+         "import os; print(os.environ.get('GEMINI_API_KEY', 'MISSING'))"],
+        timeout=60,
+    )
+    assert result.stdout.strip() == "MISSING"
+    assert "super-secret-value" not in result.stdout
+
+
+def test_run_argv_runs_in_the_given_directory(tmp_path):
+    target = tmp_path / "here.txt"
+    target.write_text("x", encoding="utf-8")
+    result = subprocess_sandbox.run_argv(
+        [sys.executable, "-c", "import os; print(os.getcwd())"],
+        cwd=tmp_path, timeout=60,
+    )
+    assert os.path.samefile(result.stdout.strip(), tmp_path)
+
+
+def test_run_argv_timeout_kills_the_child():
+    with pytest.raises(subprocess.TimeoutExpired):
+        subprocess_sandbox.run_argv(
+            [sys.executable, "-c", "import time; time.sleep(30)"], timeout=2
+        )
+
+
+def test_run_argv_refuses_an_empty_command():
+    with pytest.raises(ValueError):
+        subprocess_sandbox.run_argv([])
+
+
+def test_spawn_argv_starts_a_process_with_the_restricted_env(monkeypatch):
+    monkeypatch.setenv("DB_PASSWORD", "super-secret-value")
+    child = subprocess_sandbox.spawn_argv(
+        [sys.executable, "-c",
+         "import os,sys; sys.exit(0 if 'DB_PASSWORD' not in os.environ else 9)"]
+    )
+    assert child.wait(timeout=60) == 0

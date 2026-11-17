@@ -1,5 +1,10 @@
-"""The ``core`` package: the assistant's operating instructions and self-model.
-
-``prompt.txt`` is the operating prompt; ``self.py`` is the model of the
-assistant's own state, capability and confidence (Tier 4 W3).
 """
+Core module for JARVIS runtime
+"""
+
+from core.event_bus import event_bus, Event
+from core.state_manager import state_manager, JARVISState
+from core.runtime import runtime
+from core.lifecycle import lifecycle
+
+__all__ = ['event_bus', 'Event', 'state_manager', 'JARVISState', 'runtime', 'lifecycle']

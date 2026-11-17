@@ -1,3 +1,4 @@
+from agent import secrets_store
 # actions/computer_control.py
 # MARK XXV — Computer Control
 #
@@ -88,7 +89,8 @@ def get_base_dir() -> Path:
 
 
 BASE_DIR        = get_base_dir()
-API_CONFIG_PATH = BASE_DIR / "config" / "api_keys.json"
+# API_CONFIG_PATH managed by secrets_store
+# API_CONFIG_PATH = BASE_DIR / "config" / "api_keys.json"
 
 
 def _load_user_profile() -> dict:
@@ -379,9 +381,7 @@ def _analyze_screen_for_element(description: str) -> tuple[int, int] | None:
         import google.generativeai as genai
         import io
 
-        cfg_path = API_CONFIG_PATH
-        with open(cfg_path, "r") as f:
-            api_key = json.load(f)["gemini_api_key"]
+        api_key = secrets_store.get_key("gemini_api_key")
 
         genai.configure(api_key=api_key)
         model = genai.GenerativeModel("gemini-2.5-flash-lite")

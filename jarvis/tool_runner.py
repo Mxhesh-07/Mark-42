@@ -22,7 +22,8 @@ import numpy as np
 from google.genai import types
 
 from agent.task_queue import get_queue
-from jarvis.text_utils import fmt_args as _fmt_args, owner_name as _owner_name
+from jarvis.text_utils import fmt_args as _fmt_args, owner_name as _owner_name, model_facing_result, no_result
+from jarvis.sitrep import sitrep
 
 # Audio I/O in main.py uses the same rate; the voice-id fallback below needs the
 # constant without importing the entry point.
@@ -64,7 +65,7 @@ from companion import check_in, detect_emotion, respond_with_emotion, personal_j
 from work_assistant import add_task, complete_task, get_pending_tasks, save_meeting_notes, draft_email as wa_draft_email, get_email_drafts as wa_get_email_drafts, save_code_snippet, get_code_snippets, save_document, get_documents, daily_briefing, weekly_summary
 from startup_partner import set_startup_info, log_metric, get_metric_trend, add_milestone, complete_milestone, get_milestones, save_pitch_draft, log_partner_message, get_partner_messages, add_competitor, get_competitors, add_product_feature, get_product_features, add_team_member, get_team, log_investor_update, get_investor_updates, startup_dashboard, strategy_prompt
 from notifications import start_monitoring, stop_monitoring, briefing, get_all_notifications, mark_all_read, mark_as_read
-from smart_alerts import start_monitoring as start_alert_monitoring, stop_monitoring as stop_alert_monitoring, get_status as get_alert_status, configure as configure_alerts, check_emails_and_alert, send_toast_notification, send_whatsapp_text_alert, is_important_email
+from smart_alerts import get_status as get_alert_status, configure as configure_alerts, check_emails_and_alert, send_toast_notification, send_whatsapp_text_alert, is_important_email, set_enabled as set_alerts_enabled
 from business_tools import add_event, get_events, get_today_events, delete_event, add_github_repo, get_github_repos, log_github_issue, get_github_issues, get_mood_playlist, log_mood_music, scan_document, get_scanned_documents, schedule_meeting, get_meetings, review_code, get_code_reviews, log_water, log_break, get_health_summary, log_expense, get_expenses, get_expense_summary, get_dashboard
 from enterprise_tools import create_automation, get_automations, toggle_automation, run_automation, draft_email, get_email_drafts, send_email, configure_email, test_email_connection, add_news_topic, get_news_topics, check_news, get_news_alerts, add_to_watchlist, get_watchlist, get_stock_price, check_price_alerts, add_client, get_clients, update_client_status, add_deal, get_deals, get_crm_summary
 from life_tools import add_habit, log_habit, get_habits, habit_status, habits_at_risk, start_focus, end_focus, get_focus_stats, focus_report, save_note, get_notes, search_notes, delete_note, save_link, get_links, start_meeting_recording, stop_meeting_recording, save_transcript, summarize_meeting, get_recordings, add_routine, get_routines, remove_routine, check_due_routines, pop_routine_alerts, start_routine_scheduler, stop_routine_scheduler, add_income, add_invoice, update_invoice_status, add_asset, add_liability, get_net_worth, get_finance_summary, get_finance_dashboard, life_briefing
@@ -74,9 +75,43 @@ from hologram_models import get_model as hologram_model, save as hologram_save, 
 
 class ToolRunnerMixin:
 
+    async def _confirm_live(self, name: str, args: dict, reason: str,
+                            token=None) -> tuple[str, str]:
+        """A -> B -> C for a consequential call. Returns (status, message).
+
+        ``allow`` runs it, ``challenge`` returns instructions for the spoken
+        two-step (the model must ask and re-call with the code), ``deny`` refuses.
+        """
+        from agent import live_approval
+
+        if token:
+            ok, why = live_approval.consume(token, name, args)
+            return ("allow", why) if ok else ("deny", f"Refused: {why}.")
+
+        verdict = await asyncio.to_thread(
+            live_approval.ask_ui, getattr(self.ui, "root", None), name, args, reason)
+        choice = live_approval.decide(verdict, name, args)
+        if choice == "allow":
+            return "allow", "approved"
+        if choice == "challenge":
+            code = await asyncio.to_thread(live_approval.issue, name, args)
+            return "challenge", live_approval.challenge_text(name, code)
+        if verdict == "timeout":
+            return "deny", "Refused: no approval was given before the prompt timed out."
+        if verdict == "no-ui":
+            return "deny", (
+                "Refused: this action needs explicit approval, and no approval "
+                "prompt is available. Approve it in the JARVIS window.")
+        return "deny", "Refused: the user declined."
+
     async def _execute_tool(self, fc) -> types.FunctionResponse:
         name = fc.name
         args = dict(fc.args or {})
+
+        # A spoken-confirmation code arrives as an extra argument. Strip it here,
+        # before schema validation, so it is never mistaken for a tool parameter
+        # and never reaches the action itself.
+        approval_token = args.pop("approval", None)
 
         print(f"[JARVIS] 🔧 TOOL: {name}  ARGS: {args}")
         self.ui.jarvis_think("tool", f"{name}({_fmt_args(args)})")
@@ -116,6 +151,28 @@ class ToolRunnerMixin:
                 response={"result": f"Refused: {_reason}"},
             )
 
+        # A `confirm` from the policy means: ask, do not assume. The screen prompt
+        # is tried first; if none is available, only actions that reach another
+        # person may be confirmed aloud; everything else fails closed.
+        if _gate.level is _Level.CONFIRM:
+            _status, _detail = await self._confirm_live(
+                name, args, _gate.reason, approval_token)
+            if _status != "allow":
+                print(f"[JARVIS] 🔏 [{name}] {_detail[:160]}")
+                self.ui.write_log(f"🔏 [{name}] {_detail}")
+                self.ui.jarvis_think("err", f"approval required [{name}]")
+                try:
+                    _audit.record("action_denied", tool=name, parameters=args,
+                                  level="confirm", outcome=_status,
+                                  detail=_detail[:300])
+                except Exception:
+                    pass
+                return types.FunctionResponse(
+                    id=fc.id,
+                    name=name,
+                    response={"result": _detail},
+                )
+
         loop   = asyncio.get_event_loop()
         result = "Done."
         failed = False
@@ -131,6 +188,22 @@ class ToolRunnerMixin:
             elif name == "get_open_windows":
                 r = await loop.run_in_executor(None, lambda: _describe_state())
                 result = r or "No notable windows or apps are currently open."
+
+            elif name == "system_status":
+                r = await loop.run_in_executor(None, lambda: sitrep())
+                result = r or "System status unavailable."
+
+            elif name == "switch_persona":
+                # Interface only: this re-skins the HUD and nothing else. It does
+                # not touch the prompt, the model or the microphone, and the
+                # returned text must not imply a personality change.
+                wanted = str(args.get("name", "") or "").strip().lower()
+                applied = self.ui.set_persona(wanted)
+                if applied:
+                    result = f"HUD protocol switched to {applied.upper()}."
+                else:
+                    result = (f"No protocol called {wanted!r}. "
+                              "Available: jarvis, friday, ultron.")
 
             elif name == "forget":
                 # H4: the user's own data, by their own request. Destructive and
@@ -185,13 +258,13 @@ class ToolRunnerMixin:
                 r = await loop.run_in_executor(
                     None, lambda: browser_control(parameters=args, player=self.ui)
                 )
-                result = r or "Browser action completed."
+                result = r or no_result(name)
 
             elif name == "file_controller":
                 r = await loop.run_in_executor(
                     None, lambda: file_controller(parameters=args, player=self.ui)
                 )
-                result = r or "File operation completed."
+                result = r or no_result(name)
 
             elif name == "send_message":
                 r = await loop.run_in_executor(
@@ -212,7 +285,7 @@ class ToolRunnerMixin:
                 r = await loop.run_in_executor(
                     None, lambda: youtube_video(parameters=args, response=None, player=self.ui)
                 )
-                result = r or "Done."
+                result = r or no_result(name)
 
             elif name == "screen_process":
                 threading.Thread(
@@ -232,19 +305,19 @@ class ToolRunnerMixin:
                         parameters=args, response=None, player=self.ui
                     )
                 )
-                result = r or "Done."
+                result = r or no_result(name)
 
             elif name == "cmd_control":
                 r = await loop.run_in_executor(
                     None, lambda: cmd_control(parameters=args, player=self.ui)
                 )
-                result = r or "Command executed."
+                result = r or no_result(name)
 
             elif name == "desktop_control":
                 r = await loop.run_in_executor(
                     None, lambda: desktop_control(parameters=args, player=self.ui)
                 )
-                result = r or "Desktop action completed."
+                result = r or no_result(name)
             elif name == "code_helper":
                 r = await loop.run_in_executor(
                     None, lambda: code_helper(
@@ -253,7 +326,7 @@ class ToolRunnerMixin:
                         speak=self.speak 
                     )
                 )
-                result = r or "Done."
+                result = r or no_result(name)
 
             elif name == "dev_agent":
                 r = await loop.run_in_executor(
@@ -263,7 +336,7 @@ class ToolRunnerMixin:
                         speak=self.speak
                     )
                 )
-                result = r or "Done."
+                result = r or no_result(name)
             elif name == "register_voice":
                 speaker_name = (args.get("name") or "").strip() or _owner_name()
                 voice_id = np.frombuffer(self._snapshot_mic_audio(), dtype=np.int16)
@@ -579,10 +652,10 @@ class ToolRunnerMixin:
                     emails = check_emails_and_alert()
                     result = f"Found {len(emails)} important emails." if emails else "No important emails right now."
                 elif action == "enable":
-                    start_alert_monitoring()
-                    result = "WhatsApp alerts enabled."
+                    ok = set_alerts_enabled(True)
+                    result = "WhatsApp alerts enabled." if ok else "Alerts could not start; check the config."
                 elif action == "disable":
-                    stop_alert_monitoring()
+                    set_alerts_enabled(False)
                     result = "WhatsApp alerts disabled."
                 else:
                     result = f"Unknown alert action: {action}"
@@ -703,23 +776,23 @@ class ToolRunnerMixin:
                 r = await loop.run_in_executor(
                     None, lambda: spotify_control(parameters=args)
                 )
-                result = r or "Spotify action completed."
+                result = r or no_result(name)
             elif name == "web_search":
                 r = await loop.run_in_executor(
                     None, lambda: web_search_action(parameters=args, player=self.ui)
                     )
-                result = r or "Search completed."
+                result = r or no_result(name)
             elif name == "computer_control":
                 r = await loop.run_in_executor(
                     None, lambda: computer_control(parameters=args, player=self.ui)
                 )
-                result = r or "Done."
+                result = r or no_result(name)
 
             elif name == "flight_finder":
                 r = await loop.run_in_executor(
                     None, lambda: flight_finder(parameters=args, player=self.ui)
                 )
-                result = r or "Done."
+                result = r or no_result(name)
 
             else:
                 result = f"Unknown tool: {name}"
@@ -745,6 +818,10 @@ class ToolRunnerMixin:
                 _degrade.note_success()
         except Exception:
             pass
+
+        # The HUD and log above show the clean text; only the model-facing copy
+        # is wrapped, and only for tools whose output is third-party controlled.
+        result = model_facing_result(name, result)
 
         return types.FunctionResponse(
             id=fc.id,

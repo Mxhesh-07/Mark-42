@@ -19,7 +19,7 @@ Config lives in ``config/autonomy.json`` -> ``"roles"``::
       "enforce": true,
       "enforce_on_unknown": false,        # true once your own voice is enrolled
       "default": "owner",                 # role when no speaker was identified
-      "map": {"owner": ["Mahesh"], "guest": ["Sam"]},
+      "map": {"owner": ["<owner-name>"], "guest": ["<guest-name>"]},
       "extra_tools": {"guest": [], "unknown": []}
     }
 

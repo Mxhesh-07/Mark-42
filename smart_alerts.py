@@ -389,6 +389,12 @@ def _background_monitor():
     interval = config.get("check_interval", 60)
 
     while RUNNING:
+        # The flag is the user's preference, not just a boot default: honour a
+        # disable that happened while this thread was already running.
+        if not _load_config().get("enabled", False):
+            print("[Alert] disabled in config; monitor stopping")
+            break
+
         try:
             check_emails_and_alert()
         except Exception as e:
@@ -397,15 +403,19 @@ def _background_monitor():
         time.sleep(interval)
 
 
-def start_monitoring():
-    """Start background email monitoring."""
+def start_monitoring() -> bool:
+    """Start background email monitoring, if the user has enabled it."""
     global RUNNING, _thread
     if RUNNING:
-        return
+        return True
+    if not _load_config().get("enabled", False):
+        print("[Alert] alerts are disabled in config; not starting")
+        return False
     RUNNING = True
     _thread = threading.Thread(target=_background_monitor, daemon=True)
     _thread.start()
     print("[Alert] Smart alert monitoring started")
+    return True
 
 
 def stop_monitoring():
@@ -413,6 +423,18 @@ def stop_monitoring():
     global RUNNING
     RUNNING = False
     print("[Alert] Smart alert monitoring stopped")
+
+
+def set_enabled(on: bool) -> bool:
+    """Persist the preference and make the running state match it."""
+    with _lock:
+        config = _load_config()
+        config["enabled"] = bool(on)
+        _save_config(config)
+    if on:
+        return start_monitoring()
+    stop_monitoring()
+    return False
 
 
 def configure(user_phone: str) -> dict:

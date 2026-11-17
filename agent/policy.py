@@ -51,7 +51,9 @@ class Decision:
     ``hard`` marks a safety invariant (kill switch, sandbox escape, refused
     command, denied egress, non-owner speaker) that can never be approved away.
     A soft decision comes from the policy table and expresses *autonomy* — what
-    the assistant may do unattended — which an attended request may satisfy.
+    the assistant may do unattended. A live caller may satisfy a soft ``block``
+    by attendance, but a ``confirm`` must still be approved: being present is a
+    reason to ask, not an approval.
     """
 
     __slots__ = ("level", "reason", "hard")
@@ -306,20 +308,21 @@ def _count(decision: Decision, tool: str) -> None:
 def evaluate_live(tool: str, parameters: dict | None = None) -> Decision:
     """Gate an *attended* call — the user is present and asked for it.
 
-    The background agent is unattended, so a `confirm` there must be answered by
-    an approver or it fails closed. In the live voice path there is no separate
-    approval channel, and the spoken request *is* the authorisation, so a soft
-    ``confirm`` — and a soft ``block`` from the policy *table* — is satisfied by
-    attendance.
+    Attendance is a reason to *ask*, not an approval. A ``confirm`` from the
+    policy table is returned unchanged so the live caller must obtain explicit
+    approval (the screen prompt, or a signed single-use spoken confirmation);
+    the call is not run on the strength of the spoken request alone.
 
-    Nothing that is a safety invariant is relaxed. A ``hard`` block — the kill
-    switch, a refused shell command, a sandbox escape, a denied network
-    destination, a rate-limit guard, or a non-owner speaker (A8 downgrades
-    those to a hard block, never to ``confirm``) — is still refused, because it
-    can never be approved away.
+    A soft ``block`` from the policy table is still satisfied by attendance —
+    it expresses an autonomy preference, not a safety invariant. A ``hard``
+    block (kill switch, refused shell command, sandbox escape, denied network
+    destination, rate-limit guard, non-owner speaker) is refused here, because
+    it can never be approved away.
     """
     decision = evaluate(tool, parameters)
-    if not decision.hard and decision.level in (Level.CONFIRM, Level.BLOCK):
+    if decision.hard:
+        return decision
+    if decision.level is Level.BLOCK:
         try:
             from agent import metrics
 

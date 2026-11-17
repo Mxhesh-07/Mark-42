@@ -11,6 +11,14 @@ def set_mic_level(device_name: str, level: float) -> bool:
     return False
 
 
+def mic_muted(device_name: str) -> bool | None:
+    return None
+
+
+def unmute_mic(device_name: str) -> bool:
+    return False
+
+
 def beep(freq: int = 800, ms: int = 200) -> bool:
     return False
 

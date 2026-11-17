@@ -282,7 +282,14 @@ def authorize(man: dict, granted: bool) -> tuple[bool, str]:
     if not ok:
         _count("invalid")
         return False, why
-    consume(man.get("nonce"))
+    # The nonce normally comes from the manifest, but a caller that only holds
+    # the token (the live spoken-approval path) must still burn it, or the same
+    # code would be replayable. Token format: "<expires>.<nonce>.<signature>".
+    nonce = man.get("nonce")
+    if not nonce:
+        parts = str(man.get("token") or "").split(".", 2)
+        nonce = parts[1] if len(parts) == 3 else None
+    consume(nonce)
     _count("granted")
     return True, why
 

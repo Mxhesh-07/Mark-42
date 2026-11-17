@@ -1,3 +1,4 @@
+from agent import secrets_store
 """hologram_gen.py — AI model builder for J.A.R.V.I.S.'s holographic projector.
 
 Turns ANY object description ("a dragon", "a coffee machine", "the Eiffel Tower")

@@ -1,3 +1,4 @@
+from agent import secrets_store
 # actions/desktop.py
 # AI-powered desktop & wallpaper management
 #
@@ -24,12 +25,12 @@ def get_base_dir():
     return Path(__file__).resolve().parent.parent
 
 BASE_DIR        = get_base_dir()
-API_CONFIG_PATH = BASE_DIR / "config" / "api_keys.json"
+# API_CONFIG_PATH managed by secrets_store
+# API_CONFIG_PATH = BASE_DIR / "config" / "api_keys.json"
 
 
 def _get_api_key() -> str:
-    with open(API_CONFIG_PATH, "r", encoding="utf-8") as f:
-        return json.load(f)["gemini_api_key"]
+    return secrets_store.get_key("gemini_api_key")
 
 
 def _get_desktop() -> Path:
@@ -145,7 +146,7 @@ def _execute_generated_code(code: str) -> str:
 
     try:
         exec(code, allowed_globals)
-        return "\n".join(output_lines) if output_lines else "Task completed successfully."
+        return "\n".join(output_lines) if output_lines else "Code ran without producing output."
     except Exception as e:
         return f"Execution error: {e}\n\nCode attempted:\n{code[:200]}"
 

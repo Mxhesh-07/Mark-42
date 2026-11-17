@@ -1,3 +1,4 @@
+from agent import secrets_store
 import subprocess
 import sys
 import json
@@ -11,12 +12,12 @@ def get_base_dir():
     return Path(__file__).resolve().parent.parent
 
 BASE_DIR        = get_base_dir()
-API_CONFIG_PATH = BASE_DIR / "config" / "api_keys.json"
+# API_CONFIG_PATH managed by secrets_store
+# API_CONFIG_PATH = BASE_DIR / "config" / "api_keys.json"
 
 
 def _get_api_key() -> str:
-    with open(API_CONFIG_PATH, "r", encoding="utf-8") as f:
-        return json.load(f)["gemini_api_key"]
+    return secrets_store.get_key("gemini_api_key")
 
 
 def _get_platform() -> str:
@@ -125,37 +126,34 @@ def _ask_gemini(task: str) -> str:
 
 def _run_silent(command: str, timeout: int = 20) -> str:
     try:
+        from agent import subprocess_sandbox
+
         platform = _get_platform()
         if platform == "windows":
             is_ps = command.strip().lower().startswith("powershell")
             if is_ps:
                 cmd_inner = re.sub(r'^powershell\s+"?', '', command, flags=re.IGNORECASE).rstrip('"')
-                result = subprocess.run(
+                result = subprocess_sandbox.run_argv(
                     ["powershell", "-NoProfile", "-Command", cmd_inner],
-                    capture_output=True, text=True,
-                    encoding="utf-8", errors="replace", timeout=timeout
+                    timeout=timeout, cwd=Path.home(), encoding="utf-8"
                 )
             else:
-                result = subprocess.run(
+                result = subprocess_sandbox.run_argv(
                     ["cmd", "/c", command],
-                    capture_output=True, text=True,
-                    encoding="cp1252", errors="replace",
-                    timeout=timeout, cwd=str(Path.home())
+                    timeout=timeout, cwd=Path.home(), encoding="cp1252"
                 )
         else:
             shell = "/bin/zsh" if platform == "macos" else "/bin/bash"
-            result = subprocess.run(
-                command, shell=True, executable=shell,
-                capture_output=True, text=True,
-                errors="replace", timeout=timeout,
-                cwd=str(Path.home())
+            result = subprocess_sandbox.run_argv(
+                [shell, "-c", command],
+                timeout=timeout, cwd=Path.home()
             )
 
         output = result.stdout.strip()
         error  = result.stderr.strip()
         if output:  return output[:2000]
         if error:   return f"[stderr]: {error[:500]}"
-        return "Command executed with no output."
+        return f"Command exited with code {result.returncode} and no output."
 
     except subprocess.TimeoutExpired:
         return f"Command timed out after {timeout}s."
@@ -165,10 +163,12 @@ def _run_silent(command: str, timeout: int = 20) -> str:
 
 def _run_visible(command: str) -> None:
     try:
+        from agent import subprocess_sandbox
+
         platform = _get_platform()
         if platform == "windows":
-            subprocess.Popen(
-                f'cmd /k "{command}"',
+            subprocess_sandbox.spawn_argv(
+                ["cmd", "/k", command],
                 creationflags=subprocess.CREATE_NEW_CONSOLE
             )
         elif platform == "macos":
@@ -219,8 +219,13 @@ def cmd_control(
         player.write_log(f"[CMD] {command[:60]}")
 
     if any(x in command.lower() for x in ["notepad", "explorer", "start "]):
-        subprocess.Popen(command, shell=True)
-        return f"Opened: {command}"
+        from agent import subprocess_sandbox
+
+        try:
+            subprocess_sandbox.spawn_argv(["cmd", "/c", command])
+            return f"Opened: {command}"
+        except Exception as e:
+            return f"Could not open '{command}': {e}"
 
     if visible:
         _run_visible(command)

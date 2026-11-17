@@ -12,6 +12,7 @@ from typing import Callable
 from agent.planner       import create_plan, replan
 from agent.error_handler import analyze_error, generate_fix, ErrorDecision
 from agent.reflector     import decide_next_step, verify_goal
+from agent import secrets_store
 from agent import approval, audit, policy, subprocess_sandbox, untrusted
 from agent.policy        import Level
 
@@ -23,7 +24,8 @@ def get_base_dir() -> Path:
 
 
 BASE_DIR        = get_base_dir()
-API_CONFIG_PATH = BASE_DIR / "config" / "api_keys.json"
+# API_CONFIG_PATH managed by secrets_store
+# API_CONFIG_PATH = BASE_DIR / "config" / "api_keys.json"
 
 
 def _think(kind: str, text: str) -> None:
@@ -36,8 +38,7 @@ def _think(kind: str, text: str) -> None:
 
 
 def _get_api_key() -> str:
-    with open(API_CONFIG_PATH, "r", encoding="utf-8") as f:
-        return json.load(f)["gemini_api_key"]
+    return secrets_store.get_key("gemini_api_key")
 
 
 # Tool results that actually mean "this did not work" — a model refusal or a
@@ -171,7 +172,7 @@ def _run_generated_code(description: str, speak: Callable | None = None) -> str:
         if result.returncode == 0 and output:
             return output
         elif result.returncode == 0:
-            return "Task completed successfully."
+            return "Code ran without producing output."
         elif error:
             raise RuntimeError(f"Code error: {error[:400]}")
         raise RuntimeError(

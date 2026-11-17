@@ -1,0 +1,506 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>NEXUS // MAINFRAME HUD</title>
+
+<!-- Technical monospace stack. Falls back to Courier New when offline. -->
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;800&family=Share+Tech+Mono&display=swap" rel="stylesheet" />
+
+<link rel="stylesheet" href="styles.css" />
+</head>
+
+<body>
+<!-- ============================================================
+     STAGE — fixed 9:16 portrait artboard, scaled by JS (--u / --v)
+     ============================================================ -->
+<div class="stage" id="stage">
+
+  <!-- ==========================================================
+       1. BACKGROUND / ATMOSPHERE LAYERS
+       ========================================================== -->
+  <div class="bg-grid" aria-hidden="true"></div>
+  <div class="bg-vignette" aria-hidden="true"></div>
+  <div class="scanlines" aria-hidden="true"></div>
+  <div class="sweep" aria-hidden="true"></div>
+
+  <!-- ==========================================================
+       2. CIRCUIT TRACES — draw themselves outward from the hub
+           viewBox is 900 x 1600 (stage reference units)
+       ========================================================== -->
+  <svg class="circuits" viewBox="0 0 900 1600" preserveAspectRatio="none" aria-hidden="true">
+    <defs>
+      <!-- soft neon bloom for the whole trace layer -->
+      <filter id="traceGlow" x="-20%" y="-20%" width="140%" height="140%">
+        <feGaussianBlur stdDeviation="2.4" result="blur" />
+        <feMerge>
+          <feMergeNode in="blur" />
+          <feMergeNode in="SourceGraphic" />
+        </feMerge>
+      </filter>
+    </defs>
+
+    <!-- dim underlay: always visible once routing completes -->
+    <g class="traces-dim" filter="url(#traceGlow)">
+      <path pathLength="100" d="M450 768 V610 H206 V196" />
+      <path pathLength="100" d="M450 768 V596 H700 V214" />
+      <path pathLength="100" d="M450 768 H150" />
+      <path pathLength="100" d="M450 768 H752" />
+      <path pathLength="100" d="M450 768 V946 H150 V1120" />
+      <path pathLength="100" d="M450 768 V946 H750 V1120" />
+      <path pathLength="100" d="M450 768 V1408" />
+      <path pathLength="100" d="M206 610 H118 V430" />
+      <path pathLength="100" d="M700 596 H784 V430" />
+      <path pathLength="100" d="M150 946 H96 V1060" />
+      <path pathLength="100" d="M750 946 H806 V1060" />
+      <!-- static filler stubs for density -->
+      <path pathLength="100" d="M260 196 H196 V150" class="stub" />
+      <path pathLength="100" d="M644 214 H706 V160" class="stub" />
+      <path pathLength="100" d="M96 1060 H60 V990" class="stub" />
+      <path pathLength="100" d="M806 1060 H844 V990" class="stub" />
+      <path pathLength="100" d="M436 432 H464 M436 394 H464 M436 356 H464" class="stub" />
+    </g>
+
+    <!-- live overlay: stroke-dashoffset is animated outward on boot -->
+    <g class="traces-live" filter="url(#traceGlow)">
+      <path id="t1" class="trace" style="--i:0"  pathLength="100" d="M450 768 V610 H206 V196" />
+      <path id="t2" class="trace" style="--i:1"  pathLength="100" d="M450 768 V596 H700 V214" />
+      <path id="t3" class="trace" style="--i:2"  pathLength="100" d="M450 768 H150" />
+      <path id="t4" class="trace" style="--i:3"  pathLength="100" d="M450 768 H752" />
+      <path id="t5" class="trace" style="--i:4"  pathLength="100" d="M450 768 V946 H150 V1120" />
+      <path id="t6" class="trace" style="--i:5"  pathLength="100" d="M450 768 V946 H750 V1120" />
+      <path id="t7" class="trace" style="--i:6"  pathLength="100" d="M450 768 V1408" />
+      <path id="t8" class="trace" style="--i:7"  pathLength="100" d="M206 610 H118 V430" />
+      <path id="t9" class="trace" style="--i:8"  pathLength="100" d="M700 596 H784 V430" />
+      <path id="t10" class="trace" style="--i:9" pathLength="100" d="M150 946 H96 V1060" />
+      <path id="t11" class="trace" style="--i:10" pathLength="100" d="M750 946 H806 V1060" />
+      <path id="t12" class="trace" style="--i:11" pathLength="100" d="M450 455 V250" />
+    </g>
+
+    <!-- terminal nodes -->
+    <g class="nodes" filter="url(#traceGlow)">
+      <circle class="node" style="--i:0"  cx="206" cy="196"  r="3" />
+      <circle class="node" style="--i:1"  cx="700" cy="214"  r="3" />
+      <circle class="node" style="--i:2"  cx="150" cy="768"  r="3" />
+      <circle class="node" style="--i:3"  cx="752" cy="768"  r="3" />
+      <circle class="node" style="--i:4"  cx="150" cy="1120" r="3" />
+      <circle class="node" style="--i:5"  cx="750" cy="1120" r="3" />
+      <circle class="node" style="--i:6"  cx="450" cy="1408" r="3" />
+      <circle class="node" style="--i:7"  cx="118" cy="430"  r="3" />
+      <circle class="node" style="--i:8"  cx="784" cy="430"  r="3" />
+      <circle class="node" style="--i:9"  cx="96"  cy="1060" r="3" />
+      <circle class="node" style="--i:10" cx="806" cy="1060" r="3" />
+      <circle class="node" style="--i:11" cx="450" cy="250"  r="3" />
+    </g>
+
+    <!-- data packets travelling along the main trunks (SMIL) -->
+    <g class="packets" filter="url(#traceGlow)">
+      <circle class="packet" r="2.6">
+        <animateMotion dur="3.6s" repeatCount="indefinite" begin="3.8s">
+          <mpath href="#t1" xlink:href="#t1" />
+        </animateMotion>
+      </circle>
+      <circle class="packet" r="2.6">
+        <animateMotion dur="4.4s" repeatCount="indefinite" begin="4.6s">
+          <mpath href="#t4" xlink:href="#t4" />
+        </animateMotion>
+      </circle>
+      <circle class="packet" r="2.6">
+        <animateMotion dur="4.0s" repeatCount="indefinite" begin="4.1s">
+          <mpath href="#t6" xlink:href="#t6" />
+        </animateMotion>
+      </circle>
+      <circle class="packet" r="2.6">
+        <animateMotion dur="5.0s" repeatCount="indefinite" begin="5.2s">
+          <mpath href="#t7" xlink:href="#t7" />
+        </animateMotion>
+      </circle>
+    </g>
+  </svg>
+
+  <!-- ==========================================================
+       3. FRAME — corner brackets + micro rulers
+       ========================================================== -->
+  <div class="frame" aria-hidden="true">
+    <i class="br tl"></i><i class="br tr"></i><i class="br bl"></i><i class="br br2"></i>
+    <div class="ruler ruler-top"></div>
+    <div class="ruler ruler-bottom"></div>
+    <div class="ruler ruler-left"></div>
+    <div class="ruler ruler-right"></div>
+  </div>
+
+  <!-- ==========================================================
+       4. TOP STATUS BAR
+       ========================================================== -->
+  <header class="topbar mod" data-boot="0">
+    <div class="tb-cell">
+      <span class="led"></span>
+      <span class="tb-k">SYS.CORE</span>
+      <span class="tb-v ok">ONLINE</span>
+    </div>
+    <div class="tb-cell tb-mid">
+      <span class="tb-title">NEXUS // MAINFRAME 4.0</span>
+    </div>
+    <div class="tb-cell tb-end">
+      <span class="tb-k">UTC</span>
+      <span class="tb-v" id="clock">00:00:00Z</span>
+      <span class="tb-sep"></span>
+      <span class="tb-k">UP</span>
+      <span class="tb-v" id="uptime">00:00:00</span>
+    </div>
+  </header>
+
+  <!-- ==========================================================
+       5. TITLE BLOCK
+       ========================================================== -->
+  <section class="titleblock mod" data-boot="1">
+    <div class="title-row">
+      <h1 class="title">J.A.R.V.I.S<span class="title-slash">//</span></h1>
+      <div class="title-meta">
+        <span>MK-LXXXV</span>
+        <span>BUILD 4.0.117</span>
+        <span class="ok">SECURE</span>
+      </div>
+    </div>
+    <div class="title-sub">
+      <span>ADAPTIVE NEURAL INTERFACE</span>
+      <span class="hair"></span>
+      <span class="dim">CH-01 · 0x9F2A · AES-512</span>
+    </div>
+  </section>
+
+  <!-- ==========================================================
+       6. CENTRAL HUB — concentric rings + microchip
+       ========================================================== -->
+  <div class="hub">
+    <span class="hub-deg d0">000</span>
+    <span class="hub-deg d90">090</span>
+    <span class="hub-deg d180">180</span>
+    <span class="hub-deg d270">270</span>
+
+    <svg class="hub-svg" viewBox="0 0 600 600" aria-hidden="true">
+      <defs>
+        <radialGradient id="coreGlow" cx="50%" cy="50%" r="50%">
+          <stop offset="0%"  stop-color="#00ffff" stop-opacity=".55" />
+          <stop offset="45%" stop-color="#00ffff" stop-opacity=".10" />
+          <stop offset="100%" stop-color="#00ffff" stop-opacity="0" />
+        </radialGradient>
+        <filter id="hubBloom" x="-40%" y="-40%" width="180%" height="180%">
+          <feGaussianBlur stdDeviation="3.2" result="b" />
+          <feMerge>
+            <feMergeNode in="b" />
+            <feMergeNode in="SourceGraphic" />
+          </feMerge>
+        </filter>
+      </defs>
+
+      <!-- ambient bloom behind the core -->
+      <circle class="core-ambient" cx="300" cy="300" r="150" fill="url(#coreGlow)" />
+
+      <!-- static frame rings -->
+      <g class="hub-frame">
+        <circle class="c-faint" cx="300" cy="300" r="292" />
+        <circle class="c-dot"   cx="300" cy="300" r="282" stroke-dasharray="1 7" />
+        <circle class="c-faint" cx="300" cy="300" r="188" />
+        <circle class="c-bold"  cx="300" cy="300" r="140" stroke-dasharray="150 22 60 22" />
+        <circle class="c-faint" cx="300" cy="300" r="96" />
+      </g>
+
+      <!-- counter-rotating ring stack -->
+      <g class="ring ring-a" filter="url(#hubBloom)">
+        <circle class="c-arc" cx="300" cy="300" r="258" stroke-dasharray="150 46 24 46" />
+        <circle class="orbit-dot" cx="300" cy="42" r="3.4" />
+        <circle class="orbit-dot sm" cx="558" cy="300" r="2.2" />
+      </g>
+
+      <g class="ring ring-b">
+        <circle class="c-tick" cx="300" cy="300" r="232" stroke-dasharray="1 5" />
+        <circle class="c-faint" cx="300" cy="300" r="226" />
+      </g>
+
+      <g class="ring ring-c" filter="url(#hubBloom)">
+        <circle class="c-arc" cx="300" cy="300" r="206" stroke-dasharray="200 120 60 120" />
+        <circle class="orbit-dot" cx="506" cy="300" r="2.8" />
+      </g>
+
+      <g class="ring ring-d">
+        <circle class="c-mid" cx="300" cy="300" r="164" stroke-dasharray="12 8" />
+        <circle class="c-faint" cx="300" cy="300" r="172" stroke-dasharray="1 11" />
+      </g>
+
+      <g class="ring ring-e">
+        <circle class="c-tick" cx="300" cy="300" r="118" stroke-dasharray="2 6" />
+      </g>
+
+      <!-- cardinal brackets -->
+      <g class="hub-brackets">
+        <path class="c-arc2" d="M300 148 v-18 M300 470 v18 M148 300 h-18 M470 300 h18" />
+        <path class="c-faint" d="M188 188 l-14 -14 M412 188 l14 -14 M188 412 l-14 14 M412 412 l14 14" />
+      </g>
+
+      <!-- ================= MICROCHIP (power-on target) ================= -->
+      <g class="hub-power">
+        <g class="chip">
+          <!-- pins -->
+          <g class="pins">
+            <path d="M265 250 v-14 M285 250 v-14 M305 250 v-14 M325 250 v-14 M345 250 v-14" />
+            <path d="M265 350 v14 M285 350 v14 M305 350 v14 M325 350 v14 M345 350 v14" />
+            <path d="M250 265 h-14 M250 285 h-14 M250 305 h-14 M250 325 h-14 M250 345 h-14" />
+            <path d="M350 265 h14 M350 285 h14 M350 305 h14 M350 325 h14 M350 345 h14" />
+          </g>
+          <!-- package -->
+          <rect class="chip-body" x="250" y="250" width="100" height="100" rx="7" />
+          <rect class="chip-die"  x="272" y="272" width="56" height="56" rx="2" />
+          <!-- die grid -->
+          <path class="chip-grid" d="M272 300 h56 M300 272 v56" />
+          <circle class="chip-core" cx="300" cy="300" r="7" />
+        </g>
+        <text class="chip-label" x="300" y="392" text-anchor="middle">AI·CORE</text>
+      </g>
+    </svg>
+  </div>
+
+  <!-- ==========================================================
+       7. TOP-LEFT MODULE — spectral equalizer + pill nodes
+       ========================================================== -->
+  <section class="mod eq-mod" data-boot="2">
+    <div class="mod-head"><span>SPECTRAL ANALYSER</span><span class="mod-id">A-01</span></div>
+
+    <div class="eq-body">
+      <div class="eq-bars" id="eqBars" data-bars="18"></div>
+
+      <div class="eq-pills">
+        <div class="pill"><i></i><span>BUS·1</span><b>88</b></div>
+        <div class="pill"><i></i><span>BUS·2</span><b>62</b></div>
+        <div class="pill"><i></i><span>BUS·3</span><b>94</b></div>
+        <div class="pill"><i></i><span>BUS·4</span><b>41</b></div>
+        <div class="pill"><i></i><span>BUS·5</span><b>77</b></div>
+        <div class="pill"><i></i><span>BUS·6</span><b>53</b></div>
+      </div>
+    </div>
+
+    <div class="mod-foot"><span>GAIN +4.2dB</span><span class="ok">SYNC</span></div>
+  </section>
+
+  <!-- ==========================================================
+       8. TOP-RIGHT MODULE — "9" block, gauges, buffering
+       ========================================================== -->
+  <section class="mod chip-mod" data-boot="3">
+    <div class="mod-head"><span>PROCESSOR</span><span class="mod-id">A-02</span></div>
+
+    <div class="chip-body">
+      <div class="big-square">
+        <span class="big-num">9</span>
+        <span class="big-label">THREADS</span>
+        <i class="cnr c1"></i><i class="cnr c2"></i><i class="cnr c3"></i><i class="cnr c4"></i>
+      </div>
+
+      <div class="gauges">
+        <div class="gauge" data-gauge="72">
+          <svg viewBox="0 0 40 40">
+            <circle class="g-track" cx="20" cy="20" r="16" pathLength="100" />
+            <circle class="g-val"   cx="20" cy="20" r="16" pathLength="100" />
+          </svg>
+          <div class="g-txt"><b class="g-num">72</b><span>LOAD</span></div>
+        </div>
+
+        <div class="gauge" data-gauge="48">
+          <svg viewBox="0 0 40 40">
+            <circle class="g-track" cx="20" cy="20" r="16" pathLength="100" />
+            <circle class="g-val"   cx="20" cy="20" r="16" pathLength="100" />
+          </svg>
+          <div class="g-txt"><b class="g-num">48</b><span>I/O</span></div>
+        </div>
+      </div>
+
+      <div class="buf"><span>BUFFERING<span class="dots">...</span></span></div>
+    </div>
+
+    <div class="mod-foot"><span>THREADS 9/12</span><span class="amber">QUEUE 14</span></div>
+  </section>
+
+  <!-- ==========================================================
+       9. LEFT RAIL — power allocation readouts
+       ========================================================== -->
+  <aside class="mod rail rail-left rail-a" data-boot="4">
+    <div class="mod-head"><span>POWER ALLOC</span><span class="mod-id">B-01</span></div>
+
+    <div class="rows">
+      <div class="row"><span>ARC</span><i class="bar"><b style="width:98%"></b></i><em>98%</em></div>
+      <div class="row"><span>THRUST</span><i class="bar"><b style="width:87%"></b></i><em>87%</em></div>
+      <div class="row"><span>REPULS</span><i class="bar"><b style="width:74%"></b></i><em>74%</em></div>
+      <div class="row"><span>SHIELD</span><i class="bar"><b style="width:56%"></b></i><em>56%</em></div>
+      <div class="row"><span>COOLANT</span><i class="bar"><b style="width:63%"></b></i><em>63%</em></div>
+    </div>
+
+    <div class="mini-graph">
+      <svg viewBox="0 0 160 46" preserveAspectRatio="none">
+        <path class="spark" d="M0 34 L12 28 L24 31 L36 18 L48 22 L60 12 L72 19 L84 10 L96 16 L108 8 L120 14 L132 6 L144 13 L160 9" />
+        <path class="spark-dim" d="M0 40 L160 40" />
+      </svg>
+    </div>
+
+    <div class="kv"><span>THERMAL</span><b>41&#176;C</b></div>
+    <div class="kv"><span>CAPACITANCE</span><b>1.42 GF</b></div>
+    <div class="kv"><span>FLUX</span><b class="ok">STABLE</b></div>
+
+    <div class="mod-foot"><span>BUS A</span><span class="ok">NOM</span></div>
+  </aside>
+
+  <!-- lower-left panel: subsystem status board -->
+  <aside class="mod rail rail-left rail-b" data-boot="5">
+    <div class="mod-head"><span>SUBSYSTEMS</span><span class="mod-id">B-03</span></div>
+
+    <div class="kv"><span>NAV</span><b class="ok">NOMINAL</b></div>
+    <div class="kv"><span>COMMS</span><b class="ok">NOMINAL</b></div>
+    <div class="kv"><span>SENSORS</span><b class="ok">NOMINAL</b></div>
+    <div class="kv"><span>WEAPONS</span><b class="amber">STANDBY</b></div>
+    <div class="kv"><span>LIFE SUPP</span><b class="ok">NOMINAL</b></div>
+
+    <div class="divider">LINK</div>
+
+    <div class="kv"><span>UPLINK</span><b>99.2%</b></div>
+    <div class="kv"><span>DOWNLINK</span><b>97.4%</b></div>
+    <div class="kv"><span>ENCRYPT</span><b class="ok">AES-512</b></div>
+
+    <div class="mod-foot"><span>SYNC 0.4ms</span><span class="ok">LOCKED</span></div>
+  </aside>
+
+  <!-- ==========================================================
+       10. RIGHT RAILS — proximity radar + signal telemetry
+       ========================================================== -->
+  <aside class="mod rail rail-right rail-a" data-boot="6">
+    <div class="mod-head"><span>PROXIMITY</span><span class="mod-id">B-02</span></div>
+
+    <div class="radar">
+      <div class="radar-rings"></div>
+      <div class="radar-cross"></div>
+      <div class="radar-sweep"></div>
+      <span class="blip b1"></span>
+      <span class="blip b2"></span>
+      <span class="blip b3"></span>
+    </div>
+
+    <div class="kv"><span>CONTACTS</span><b>03</b></div>
+    <div class="kv"><span>RANGE</span><b>4.2 KM</b></div>
+    <div class="kv"><span>BEARING</span><b>087&#176;</b></div>
+    <div class="kv"><span>IFF</span><b class="ok">FRIEND</b></div>
+
+    <div class="mod-foot"><span>SCAN 360&#176;</span><span class="ok">ACTIVE</span></div>
+  </aside>
+
+  <!-- lower-right panel: signal chain -->
+  <aside class="mod rail rail-right rail-b" data-boot="7">
+    <div class="mod-head"><span>SIGNAL</span><span class="mod-id">B-04</span></div>
+
+    <div class="kv"><span>GAIN</span><b>+4.2 dB</b></div>
+    <div class="kv"><span>SNR</span><b>31.8 dB</b></div>
+    <div class="kv"><span>AZIMUTH</span><b>087&#176;</b></div>
+
+    <div class="threat">
+      <span class="threat-k">THREAT</span>
+      <span class="threat-v">LOW</span>
+      <i class="threat-bar"><b style="width:22%"></b></i>
+    </div>
+
+    <div class="vstrip" aria-hidden="true">
+      <i style="--h:34%"></i><i style="--h:58%"></i><i style="--h:82%"></i>
+      <i style="--h:46%"></i><i style="--h:94%"></i><i style="--h:66%"></i>
+      <i style="--h:38%"></i><i style="--h:72%"></i><i style="--h:50%"></i>
+      <i style="--h:88%"></i><i style="--h:30%"></i><i style="--h:62%"></i>
+    </div>
+  </aside>
+
+  <!-- ==========================================================
+       11. BOTTOM MODULES — keypad matrices + data blocks
+       ========================================================== -->
+  <section class="mod pad-mod pad-a" data-boot="8">
+    <div class="mod-head"><span>MATRIX // K1</span><span class="mod-id">C-11</span></div>
+    <div class="pad" data-grid="6x4"></div>
+  </section>
+
+  <section class="mod pad-mod pad-b" data-boot="9">
+    <div class="mod-head"><span>MATRIX // K2</span><span class="mod-id">C-12</span></div>
+    <div class="pad" data-grid="6x4"></div>
+  </section>
+
+  <section class="mod data-mod data-top" data-boot="10">
+    <div class="mod-head"><span>MEMORY BANK</span><span class="mod-id">C-13</span></div>
+    <div class="rows compact">
+      <div class="row"><span>HEAP</span><i class="bar"><b style="width:74%"></b></i><em>74%</em></div>
+      <div class="row"><span>CACHE</span><i class="bar"><b style="width:92%"></b></i><em>92%</em></div>
+      <div class="row"><span>SWAP</span><i class="bar"><b style="width:18%"></b></i><em>18%</em></div>
+    </div>
+    <div class="data-cells">
+      <span>0x1F</span><span>0x2A</span><span>0x3C</span><span>0x4D</span>
+      <span>0x5E</span><span>0x6F</span><span>0x70</span><span>0x81</span>
+    </div>
+  </section>
+
+  <!-- ==========================================================
+       12. WAVEFORM MODULE
+       ========================================================== -->
+  <section class="mod wave-mod" data-boot="11">
+    <div class="mod-head"><span>CARRIER WAVEFORM</span><span class="mod-id">C-14</span></div>
+    <svg class="wave" viewBox="0 0 400 100" preserveAspectRatio="none">
+      <path class="wave-axis" d="M0 50 H400" />
+      <polyline id="waveLine" points="" />
+    </svg>
+    <div class="mod-foot"><span>F 2.4 GHz</span><span class="ok">LOCKED</span></div>
+  </section>
+
+  <!-- ==========================================================
+       13. DATA BLOCK (bottom right)
+       ========================================================== -->
+  <section class="mod data-mod data-bot" data-boot="12">
+    <div class="mod-head"><span>BUS TELEMETRY</span><span class="mod-id">C-15</span></div>
+    <div class="kv-2">
+      <div><span>RX</span><b>1.82 GB/s</b></div>
+      <div><span>TX</span><b>0.94 GB/s</b></div>
+      <div><span>LAT</span><b>12 ms</b></div>
+      <div><span>ERR</span><b class="ok">0.00%</b></div>
+    </div>
+  </section>
+
+  <!-- ==========================================================
+       14. NEWS / EVENT TICKER
+       ========================================================== -->
+  <div class="ticker mod" data-boot="13">
+    <span class="ticker-tag">LIVE</span>
+    <div class="ticker-clip">
+      <div class="ticker-track">
+        <span>SYS.CORE NOMINAL // ALL SUBSYSTEMS GREEN · NEURAL LINK 99.2% · ARC OUTPUT STABLE AT 1.42 GF · ORBITAL RELAY SYNCED · ENCRYPTION AES-512 ACTIVE · </span>
+        <span aria-hidden="true">SYS.CORE NOMINAL // ALL SUBSYSTEMS GREEN · NEURAL LINK 99.2% · ARC OUTPUT STABLE AT 1.42 GF · ORBITAL RELAY SYNCED · ENCRYPTION AES-512 ACTIVE · </span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==========================================================
+       15. FOOTER STATUS
+       ========================================================== -->
+  <footer class="footer mod" data-boot="14">
+    <span>LINK <b class="ok">ESTABLISHED</b></span>
+    <span>CPU <b id="fCpu">23%</b></span>
+    <span>MEM <b id="fMem">41%</b></span>
+    <span>NET <b id="fNet">OK</b></span>
+    <span class="dim">NEXUS-OS 4.0.117 / MARK-LXXXV</span>
+  </footer>
+
+  <!-- boot sequence caption -->
+  <div class="boot-msg" id="bootMsg">COLD START</div>
+
+</div>
+
+<noscript>
+  <style>
+    .mod { opacity: 1 !important; transform: none !important; }
+    .ring, .hub-power, .trace { opacity: 1 !important; }
+  </style>
+</noscript>
+
+<script src="hud.js"></script>
+</body>
+</html>

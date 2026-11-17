@@ -5,7 +5,7 @@ from agent.policy import Level
 
 
 def test_enrolled_voice_is_the_owner(policy_file):
-    roles.set_from_speaker("Mahesh", status="known")
+    roles.set_from_speaker("Alice", status="known")
     assert roles.current() == "owner"
 
 

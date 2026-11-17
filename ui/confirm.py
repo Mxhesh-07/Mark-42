@@ -9,14 +9,17 @@ Design constraints, in order of importance:
 1. **Deny is the default.** The Deny button holds focus, the window close button
    denies, a timeout denies (30 s), and a broken or missing UI denies. Nothing
    here can approve by accident.
-2. **The Tk event loop is never blocked.** ``ask`` is called from the executor's
-   worker thread; the dialog is built on the Tk thread via ``root.after`` and the
-   worker waits on an :class:`threading.Event`. The Tk thread only builds a
+2. **The UI event loop is never blocked.** ``ask`` is called from the executor's
+   worker thread; the dialog is built on the UI thread via ``root.after`` and the
+   worker waits on an :class:`threading.Event`. The UI thread only builds a
    window.
 3. **Headless fails closed.** No Tk, no display, no answer → DENY.
-4. **"Always allow" writes a narrow rule** (:mod:`agent.approval_rules`), and is
+6. **The HUD can stand in for the Tk dialog.** A mirror UI registers a shower
+   with :func:`set_shower`; it receives the same panel data and resolves the
+   same :class:`Answer`, so the web modal is not a second approval path.
+7. **"Always allow" writes a narrow rule** (:mod:`agent.approval_rules`), and is
    not even offered when there is nothing narrow to bind to.
-5. **Exactly one audit entry per decision**, naming the outcome and why.
+8. **Exactly one audit entry per decision**, naming the outcome and why.
 
 The content builder is pure data, so the interesting half of this module is
 testable without a display.
@@ -34,6 +37,29 @@ ALWAYS = "always"
 DECISIONS = (APPROVE, DENY, ALWAYS)
 
 DEFAULT_TIMEOUT_S = 30.0
+
+# An alternative presenter, installed by a mirror UI (the web HUD). It has the
+# same contract as the Tk path: show(panel, done) -> None. ``None`` means "use
+# the Tk dialog". Kept module-level because agent code reaches this module
+# directly, without going through the UI object.
+_shower = None
+
+
+def set_shower(fn) -> None:
+    """Install (or clear, with ``None``) the presenter used by default.
+
+    The presenter must not block: it hands the panel somewhere the user can see
+    it and calls ``done(decision)`` later, from whatever thread answers. A
+    presenter that raises is treated as a failed dialog and denies.
+    """
+    global _shower
+    _shower = fn
+
+
+def _default_show():
+    if _shower is not None:
+        return _shower
+    return _show_tk if _tk_available() else None
 
 _BUTTONS = (
     (DENY, "Deny", True),          # default focus
@@ -123,7 +149,7 @@ def consult(tool: str, params: dict | None = None, assessment=None, *,
     offered = {button["id"] for button in panel["buttons"]}
 
     if show is None:
-        show = _show_tk if _tk_available() else None
+        show = _default_show()
 
     if show is None:
         answer = Answer(DENY, "no UI available")
@@ -150,6 +176,20 @@ def consult(tool: str, params: dict | None = None, assessment=None, *,
 def ask(tool: str, params: dict | None = None, assessment=None, **kwargs) -> str:
     """The W6 interface: ``APPROVE`` | ``DENY`` | ``ALWAYS``."""
     return consult(tool, params, assessment, **kwargs).decision
+
+
+def consult_on(root, tool: str, params: dict | None = None, assessment=None, *,
+               effect: str = "", timeout_s: float = DEFAULT_TIMEOUT_S) -> Answer:
+    """Show the dialog on an explicit Tk root, keeping the reason for the answer.
+
+    The live voice path needs to tell "the user denied" apart from "there was no
+    UI to ask", because only the second may fall back to a spoken confirmation.
+    A registered shower (the web HUD) wins over ``root``; the Tk window is the
+    fallback, not a second prompt.
+    """
+    show = _shower or (lambda panel, done: _show_on(root, panel, done))
+    return consult(tool, params, assessment, effect=effect, timeout_s=timeout_s,
+                   show=show)
 
 
 def _run(panel: dict, show, timeout_s: float) -> Answer:
@@ -321,10 +361,13 @@ def ui_approver(root=None, *, timeout_s: float = DEFAULT_TIMEOUT_S):
     bound to the effect, instead of the task failing closed with nothing shown.
     """
     def approver(tool: str, params: dict, effect: str = "", assessment=None) -> bool:
+        show = _shower
+        if show is None:
+            if root is None:
+                return False
+            show = lambda panel, done: _show_on(root, panel, done)
         answer = consult(tool, params, assessment, effect=effect,
-                         timeout_s=timeout_s,
-                         show=None if root is None else
-                         (lambda panel, done: _show_on(root, panel, done)))
+                         timeout_s=timeout_s, show=show)
         return answer.approved
 
     return approver

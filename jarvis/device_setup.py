@@ -190,3 +190,34 @@ def apply_mic_level(device_name_value: str, level: float, *, printer=print) -> b
     except Exception as exc:
         printer(f"[JARVIS] ⚠️ could not set mic level: {exc}")
         return False
+
+
+def input_muted(device_name_value: str) -> bool | None:
+    """True when Windows has this capture endpoint muted.
+
+    A muted endpoint still opens and still reports its level, but it delivers
+    digital silence — the one failure mode that looks exactly like "the user is
+    not speaking". ``None`` means the platform could not say.
+    """
+    if not device_name_value:
+        return None
+    try:
+        from core import platform as platform_adapter
+
+        return platform_adapter.mic_muted(device_name_value)
+    except Exception:
+        return None
+
+
+def unmute_input(device_name_value: str, *, printer=print) -> bool:
+    """Clear the endpoint's mute switch without touching its gain."""
+    try:
+        from core import platform as platform_adapter
+
+        if platform_adapter.unmute_mic(device_name_value):
+            printer(f"[JARVIS] 🔈 Mic unmuted: {device_name_value}")
+            return True
+        return False
+    except Exception as exc:
+        printer(f"[JARVIS] ⚠️ could not unmute the microphone: {exc}")
+        return False

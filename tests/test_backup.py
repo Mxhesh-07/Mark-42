@@ -1,3 +1,4 @@
+from agent import secrets_store
 """Tier 2 D4 - backup and restore of runtime state."""
 
 import zipfile

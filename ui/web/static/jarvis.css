@@ -1,0 +1,280 @@
+/* J.A.R.V.I.S. additions on top of the ULTRON shell.
+   Kept separate so style.css stays a near-verbatim vendor file: when the shell
+   is updated, only the tokens at the top of style.css and this file need to be
+   re-checked. */
+
+:root {
+  --globe-x: 50%;
+}
+
+/* The name is set with periods; tighten the tracking a little so it still
+   reads as one word. */
+.brand h1 { letter-spacing: 0.16em; }
+.brand h1::after { content: none; }
+
+/* ---- panels ------------------------------------------------------------ */
+.board {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--steel);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.bullets {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--text);
+}
+.bullets li {
+  padding: 3px 8px;
+  border-left: 2px solid var(--cyan);
+  background: rgba(135, 148, 162, 0.06);
+  overflow-wrap: anywhere;
+}
+.bullets li.done { border-left-color: var(--ok); color: var(--muted); }
+.bullets li.active { border-left-color: var(--warn); }
+.bullets:empty::before {
+  content: 'Queue empty';
+  color: var(--muted);
+  font-size: 14px;
+}
+
+/* Agent states share the action-log colour language. */
+#agent-state.run, #agent-state.working { color: var(--warn); }
+#agent-state.done, #agent-state.idle { color: var(--ok); }
+#agent-state.error { color: var(--bad); }
+
+/* ---- transcript -------------------------------------------------------- */
+.line.jarvis .who { color: var(--cyan); }
+.line.jarvis p { color: var(--text); }
+.line.sys .who { color: var(--steel); }
+.line.sys p { color: var(--muted); font-size: 0.82em; font-family: var(--mono); }
+.line .who { width: 70px; }
+
+/* An empty transcript should not look broken. */
+#log:empty::before {
+  content: 'Standing by. Say “Jarvis” or type a command.';
+  margin: auto;
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.12em;
+  color: rgba(150, 163, 176, 0.5);
+  text-transform: uppercase;
+}
+
+/* ---- console extras ---------------------------------------------------- */
+.stop {
+  flex: none;
+  height: 52px;
+  padding: 0 18px;
+  cursor: pointer;
+  background: rgba(135, 148, 162, 0.07);
+  border: 1px solid var(--edge);
+  font-family: var(--label);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: var(--muted);
+  transition: 0.2s;
+}
+.stop:hover {
+  color: var(--text);
+  border-color: var(--line-strong);
+  background: rgba(var(--accent-rgb), 0.16);
+}
+.stop:active { transform: translateY(1px); }
+body.speaking .stop { color: var(--text); border-color: var(--line-strong); }
+
+/* An approval outranks every other state: the machine is waiting on a human. */
+body.awaiting #status .dot {
+  background: var(--warn);
+  box-shadow: 0 0 12px var(--warn);
+  animation-duration: 0.5s;
+}
+
+/* Muted microphone: the button goes cold and the meter stops. */
+body.muted .mic { opacity: 0.45; border-color: var(--edge); }
+body.muted .mic svg { fill: var(--bad); }
+
+/* ---- boot -------------------------------------------------------------- */
+#boot { transition: opacity 0.55s ease; }
+#boot.gone { display: none; }
+.boot-core {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  text-align: center;
+}
+.boot-reactor {
+  position: relative;
+  width: 104px;
+  height: 104px;
+  margin-bottom: 14px;
+  animation: bootSpin 12s linear infinite;
+}
+.boot-reactor i {
+  position: absolute;
+  inset: 0;
+  border: 1px solid var(--cyan);
+  box-shadow: 0 0 34px rgba(var(--accent-rgb), 0.4), inset 0 0 24px rgba(var(--accent-rgb), 0.22);
+  transform: rotate(45deg);
+}
+.boot-reactor i:nth-child(2) {
+  inset: 16px;
+  border-color: var(--steel);
+  opacity: 0.55;
+  animation: bootSpin 9s linear infinite reverse;
+}
+.boot-reactor i:nth-child(3) {
+  inset: 38px;
+  border: 0;
+  background: radial-gradient(circle, #eafcff, var(--cyan) 58%, var(--blue));
+  box-shadow: 0 0 40px var(--cyan);
+  animation: pulse 2.2s infinite;
+}
+.boot-title {
+  font-family: var(--display);
+  font-weight: 800;
+  font-size: clamp(30px, 5vw, 54px);
+  letter-spacing: 0.3em;
+  color: var(--text);
+  text-shadow: 0 0 30px rgba(var(--accent-rgb), 0.7);
+}
+.boot-sub {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: 0.42em;
+  color: var(--muted);
+}
+.boot-log {
+  margin-top: 18px;
+  min-height: 96px;
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.9;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  text-align: left;
+  white-space: pre;
+}
+.boot-log b { color: var(--cyan); font-weight: 500; }
+
+@keyframes bootSpin { to { transform: rotate(405deg); } }
+
+/* ---- approval modal ----------------------------------------------------- */
+/* Deny is the default, so it is the focused, brightest button. The panel
+   repeats the same information the Tk dialog shows: effect, target, risk. */
+#confirm {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: radial-gradient(circle at 50% 45%, rgba(4, 10, 14, 0.58), rgba(2, 4, 6, 0.84));
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+}
+#confirm.on { display: flex; animation: cxIn 0.18s ease-out both; }
+#confirm.sending .cx-panel { opacity: 0.6; pointer-events: none; }
+
+.cx-panel {
+  width: min(560px, 100%);
+  padding: 22px 24px 18px;
+  background: linear-gradient(180deg, rgba(10, 17, 22, 0.97), rgba(5, 8, 11, 0.98));
+  border-color: var(--line-strong);
+  box-shadow: 0 0 0 1px rgba(var(--accent-rgb), 0.12), 0 24px 80px rgba(0, 0, 0, 0.7),
+              0 0 60px rgba(var(--accent-rgb), 0.12);
+}
+.cx-panel .panel-title { margin-bottom: 14px; }
+.cx-panel .panel-title::before { background: var(--warn); box-shadow: 0 0 9px var(--warn); }
+
+.cx-summary {
+  margin: 0 0 10px;
+  font-family: var(--body);
+  font-size: 17px;
+  line-height: 1.45;
+  color: var(--text);
+}
+.cx-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-bottom: 16px;
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.cx-detail:empty { display: none; }
+.cx-detail .risk { color: var(--warn); }
+
+.cx-buttons { display: flex; flex-wrap: wrap; gap: 8px; }
+.cx-buttons button {
+  flex: 1 1 140px;
+  height: 42px;
+  cursor: pointer;
+  font-family: var(--label);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--muted);
+  background: rgba(135, 148, 162, 0.07);
+  border: 1px solid var(--edge);
+  transition: 0.15s;
+}
+.cx-buttons button:hover { color: var(--text); border-color: var(--line-strong); }
+.cx-buttons button:focus-visible { outline: 1px solid var(--cyan); outline-offset: 2px; }
+.cx-buttons button[data-decision="approve"] {
+  color: var(--text);
+  border-color: var(--line-strong);
+  background: rgba(var(--accent-rgb), 0.14);
+}
+.cx-buttons button[data-decision="approve"]:hover { background: rgba(var(--accent-rgb), 0.26); }
+.cx-buttons button[data-decision="always"] { color: var(--steel); }
+.cx-buttons button[data-decision="deny"] {
+  color: var(--text);
+  border-color: var(--line-strong);
+  background: rgba(255, 92, 138, 0.12);
+}
+.cx-buttons button[data-decision="deny"]:hover { background: rgba(255, 92, 138, 0.24); }
+
+.cx-foot {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 14px;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.cx-foot b { color: var(--warn); font-weight: 500; }
+
+@keyframes cxIn {
+  from { opacity: 0; transform: translateY(6px) scale(0.985); }
+  to { opacity: 1; transform: none; }
+}
+
+/* ---- small screens ----------------------------------------------------- */
+@media (max-width: 900px) {
+  .boot-log { font-size: 10px; }
+  .stop { padding: 0 12px; letter-spacing: 0.12em; }
+  .cx-panel { padding: 16px 16px 14px; }
+  .cx-buttons button { flex-basis: 100%; }
+  .cx-foot { flex-direction: column; gap: 6px; }
+}

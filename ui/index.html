@@ -1,0 +1,2099 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MARK-XXX // TACTICAL HUD ARCHITECT</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;800;900&family=Rajdhani:wght@500;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+  <style>
+    /* =========================================================================
+       IRON MAN TACTICAL HUD — SUIT MORPH & OVERRIDE ARCHITECTURE
+       ARCHETYPES: J.A.R.V.I.S. | F.R.I.D.A.Y. | U.L.T.R.O.N.
+       ========================================================================= */
+
+    :root {
+      /* J.A.R.V.I.S. Default Archetype Theme */
+      --pri: #00f0ff;
+      --pri-glow: rgba(0, 240, 255, 0.65);
+      --pri-subtle: rgba(0, 240, 255, 0.12);
+      --sec: #0077ff;
+      --sec-glow: rgba(0, 119, 255, 0.45);
+      --accent: #e0f8ff;
+      --bg: #020611;
+      --bg-panel: rgba(2, 10, 25, 0.72);
+      --border: rgba(0, 240, 255, 0.35);
+      --border-bright: #00f0ff;
+      --text: #c8f4ff;
+      --text-dim: #0088aa;
+      --grid-color: rgba(0, 240, 255, 0.05);
+      --font-display: 'Orbitron', sans-serif;
+      --font-body: 'Rajdhani', sans-serif;
+      --font-mono: 'Share Tech Mono', monospace;
+      --scanline-opacity: 0.18;
+    }
+
+    body[data-archetype="friday"] {
+      --pri: #ff1a40;
+      --pri-glow: rgba(255, 26, 64, 0.7);
+      --pri-subtle: rgba(255, 26, 64, 0.14);
+      --sec: #ffaa00;
+      --sec-glow: rgba(255, 170, 0, 0.5);
+      --accent: #ffdd55;
+      --bg: #0a0406;
+      --bg-panel: rgba(22, 6, 12, 0.75);
+      --border: rgba(255, 40, 70, 0.4);
+      --border-bright: #ff3355;
+      --text: #ffe0e5;
+      --text-dim: #aa3344;
+      --grid-color: rgba(255, 170, 0, 0.06);
+      --scanline-opacity: 0.22;
+    }
+
+    body[data-archetype="ultron"] {
+      --pri: #ff0033;
+      --pri-glow: rgba(255, 0, 51, 0.85);
+      --pri-subtle: rgba(255, 0, 51, 0.18);
+      --sec: #ff4400;
+      --sec-glow: rgba(255, 68, 0, 0.6);
+      --accent: #880015;
+      --bg: #070103;
+      --bg-panel: rgba(20, 2, 7, 0.82);
+      --border: rgba(255, 0, 51, 0.5);
+      --border-bright: #ff1144;
+      --text: #ffd0d5;
+      --text-dim: #990022;
+      --grid-color: rgba(255, 0, 51, 0.08);
+      --scanline-opacity: 0.32;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+    }
+
+    html, body {
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+      background-color: var(--bg);
+      color: var(--text);
+      font-family: var(--font-body);
+      font-size: 14px;
+      transition: background-color 0.8s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    /* Ambient CRT Scanline & Vignette Overlay */
+    .hud-overlay {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 100;
+    }
+
+    .hud-scanlines {
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(
+        to bottom,
+        rgba(255, 255, 255, 0),
+        rgba(255, 255, 255, 0) 50%,
+        rgba(0, 0, 0, 0.4) 50%,
+        rgba(0, 0, 0, 0.4)
+      );
+      background-size: 100% 4px;
+      opacity: var(--scanline-opacity);
+      transition: opacity 0.5s ease;
+    }
+
+    .hud-vignette {
+      position: absolute;
+      inset: 0;
+      background: radial-gradient(circle at center, transparent 45%, rgba(0, 0, 0, 0.85) 98%);
+    }
+
+    .hud-grid {
+      position: absolute;
+      inset: 0;
+      background-image: 
+        linear-gradient(to right, var(--grid-color) 1px, transparent 1px),
+        linear-gradient(to bottom, var(--grid-color) 1px, transparent 1px);
+      background-size: 40px 40px;
+      opacity: 0.7;
+      transition: background-image 0.8s ease;
+    }
+
+    /* Shockwave & EMP Glitch Flash */
+    .emp-shockwave {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 999;
+      opacity: 0;
+      background: radial-gradient(circle at center, rgba(255, 255, 255, 0.85) 0%, var(--pri) 40%, transparent 70%);
+      mix-blend-mode: screen;
+      transform: scale(0.2);
+    }
+
+    .emp-shockwave.active {
+      animation: shockwavePulse 0.65s cubic-bezier(0.1, 0.9, 0.2, 1) forwards;
+    }
+
+    @keyframes shockwavePulse {
+      0% {
+        opacity: 0.9;
+        transform: scale(0.2);
+        filter: blur(0px) brightness(2.5);
+      }
+      50% {
+        opacity: 0.7;
+        filter: blur(6px) brightness(1.8);
+      }
+      100% {
+        opacity: 0;
+        transform: scale(2.8);
+        filter: blur(14px) brightness(1);
+      }
+    }
+
+    /* Screen Glitch Distortion on Override */
+    .glitch-flash {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 998;
+      background: var(--pri);
+      opacity: 0;
+      mix-blend-mode: overlay;
+    }
+
+    .glitch-flash.trigger {
+      animation: screenGlitch 0.5s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+    }
+
+    @keyframes screenGlitch {
+      0% { opacity: 0.6; clip-path: inset(10% 0 30% 0); transform: translateX(-8px); }
+      20% { opacity: 0.9; clip-path: inset(40% 0 10% 0); transform: translateX(8px); }
+      40% { opacity: 0.3; clip-path: inset(70% 0 5% 0); transform: translateX(-4px); }
+      60% { opacity: 0.7; clip-path: inset(5% 0 60% 0); transform: translateX(5px); }
+      80% { opacity: 0.2; clip-path: inset(25% 0 40% 0); transform: translateX(-2px); }
+      100% { opacity: 0; clip-path: inset(0 0 0 0); transform: translateX(0); }
+    }
+
+    /* =========================================================================
+       MAIN HUD CONTAINER & LAYOUT GRID
+       ========================================================================= */
+    #hud-container {
+      position: relative;
+      width: 100vw;
+      height: 100vh;
+      display: grid;
+      grid-template-rows: 64px 1fr 220px;
+      grid-template-columns: 340px 1fr 340px;
+      padding: 12px 20px;
+      gap: 16px;
+      z-index: 10;
+    }
+
+    /* Top HUD Header & Protocol Status */
+    header.hud-header {
+      grid-column: 1 / -1;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid var(--border);
+      padding: 0 16px;
+      background: var(--bg-panel);
+      backdrop-filter: blur(12px);
+      box-shadow: 0 4px 24px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+      position: relative;
+      border-radius: 4px;
+    }
+
+    header.hud-header::before,
+    header.hud-header::after {
+      content: '';
+      position: absolute;
+      width: 12px;
+      height: 12px;
+      border: 2px solid var(--border-bright);
+    }
+    header.hud-header::before { top: -2px; left: -2px; border-right: none; border-bottom: none; }
+    header.hud-header::after { top: -2px; right: -2px; border-left: none; border-bottom: none; }
+
+    .brand-group {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .stark-crest {
+      width: 38px;
+      height: 38px;
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .crest-ring {
+      position: absolute;
+      inset: 0;
+      border: 2px dashed var(--pri);
+      border-radius: 50%;
+      animation: rotateRing 14s linear infinite;
+    }
+
+    .crest-core {
+      width: 16px;
+      height: 16px;
+      background: var(--pri);
+      border-radius: 50%;
+      box-shadow: 0 0 14px var(--pri-glow);
+    }
+
+    .title-block h1 {
+      font-family: var(--font-display);
+      font-size: 19px;
+      font-weight: 900;
+      letter-spacing: 2.5px;
+      color: var(--accent);
+      text-shadow: 0 0 12px var(--pri-glow);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .badge-mark {
+      font-size: 10px;
+      padding: 2px 7px;
+      background: var(--pri-subtle);
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      letter-spacing: 1.5px;
+      color: var(--pri);
+      font-weight: 600;
+    }
+
+    .title-block .subtitle {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      letter-spacing: 1.5px;
+      color: var(--text-dim);
+    }
+
+    /* Hot-Swap Archetype Selector Buttons */
+    .archetype-dock {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: rgba(0, 0, 0, 0.4);
+      padding: 4px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+    }
+
+    .archetype-btn {
+      background: transparent;
+      border: 1px solid transparent;
+      color: var(--text-dim);
+      font-family: var(--font-display);
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 1.8px;
+      padding: 6px 14px;
+      border-radius: 4px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+      position: relative;
+    }
+
+    .archetype-btn .key-hint {
+      font-family: var(--font-mono);
+      font-size: 9px;
+      opacity: 0.6;
+      background: rgba(255, 255, 255, 0.1);
+      padding: 1px 4px;
+      border-radius: 2px;
+    }
+
+    .archetype-btn:hover {
+      color: var(--text);
+      background: var(--pri-subtle);
+      border-color: var(--border);
+    }
+
+    .archetype-btn.active {
+      color: #000;
+      background: var(--pri);
+      border-color: var(--border-bright);
+      box-shadow: 0 0 16px var(--pri-glow);
+    }
+
+    .archetype-btn.active .key-hint {
+      background: rgba(0, 0, 0, 0.25);
+      color: #000;
+      font-weight: bold;
+    }
+
+    .system-controls {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .status-pill {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 4px 10px;
+      border-radius: 20px;
+      background: rgba(0, 0, 0, 0.5);
+      border: 1px solid var(--border);
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--accent);
+    }
+
+    .live-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--pri);
+      box-shadow: 0 0 8px var(--pri-glow);
+      animation: pulseDot 1.4s ease-in-out infinite;
+    }
+
+    @keyframes pulseDot {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.3; transform: scale(0.8); }
+    }
+
+    .icon-btn {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--pri);
+      width: 32px;
+      height: 32px;
+      border-radius: 4px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.2s;
+    }
+
+    .icon-btn:hover {
+      background: var(--pri);
+      color: #000;
+      box-shadow: 0 0 10px var(--pri-glow);
+    }
+
+    /* =========================================================================
+       DYNAMIC SYSTEM ANNOUNCEMENT BANNER
+       ========================================================================= */
+    #protocol-banner {
+      position: absolute;
+      top: 80px;
+      left: 50%;
+      transform: translateX(-50%) translateY(-20px);
+      background: var(--bg-panel);
+      border: 1px solid var(--border-bright);
+      padding: 8px 32px;
+      border-radius: 4px;
+      font-family: var(--font-display);
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: 3px;
+      color: var(--accent);
+      text-shadow: 0 0 12px var(--pri-glow);
+      box-shadow: 0 0 30px var(--pri-subtle);
+      opacity: 0;
+      pointer-events: none;
+      transition: all 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+      z-index: 90;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+
+    #protocol-banner.show {
+      opacity: 1;
+      transform: translateX(-50%) translateY(0);
+    }
+
+    #protocol-banner::before,
+    #protocol-banner::after {
+      content: '///';
+      color: var(--pri);
+      letter-spacing: -1px;
+    }
+
+    /* =========================================================================
+       TELEMETRY PANELS (LEFT & RIGHT)
+       ========================================================================= */
+    .hud-panel {
+      background: var(--bg-panel);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 14px;
+      backdrop-filter: blur(14px);
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      position: relative;
+      overflow: hidden;
+      transition: border-color 0.6s, background-color 0.6s, box-shadow 0.6s;
+    }
+
+    .hud-panel::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 2px;
+      background: linear-gradient(90deg, var(--pri), transparent);
+    }
+
+    .panel-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      padding-bottom: 6px;
+    }
+
+    .panel-title {
+      font-family: var(--font-display);
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 2px;
+      color: var(--pri);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .panel-code {
+      font-family: var(--font-mono);
+      font-size: 9px;
+      color: var(--text-dim);
+    }
+
+    /* Telemetry Metric Cards */
+    .metric-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 4px;
+    }
+
+    .metric-label {
+      font-size: 12px;
+      color: var(--text-dim);
+      font-weight: 600;
+      letter-spacing: 0.5px;
+    }
+
+    .metric-val {
+      font-family: var(--font-mono);
+      font-size: 13px;
+      color: var(--accent);
+      font-weight: 700;
+      text-shadow: 0 0 6px var(--pri-glow);
+    }
+
+    .telemetry-bar-outer {
+      width: 100%;
+      height: 6px;
+      background: rgba(0, 0, 0, 0.6);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 2px;
+      overflow: hidden;
+      position: relative;
+    }
+
+    .telemetry-bar-fill {
+      height: 100%;
+      background: linear-gradient(90deg, var(--sec), var(--pri));
+      border-radius: 2px;
+      width: 75%;
+      box-shadow: 0 0 8px var(--pri-glow);
+      transition: width 0.8s cubic-bezier(0.16, 1, 0.3, 1), background 0.6s ease;
+    }
+
+    /* Radar / Hive Map Canvas */
+    .sub-canvas-wrap {
+      width: 100%;
+      height: 110px;
+      background: rgba(0, 0, 0, 0.45);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      position: relative;
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .sub-canvas {
+      width: 100%;
+      height: 100%;
+    }
+
+    /* Diagnostic Badges Grid */
+    .badge-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 6px;
+    }
+
+    .status-badge-item {
+      background: rgba(0, 0, 0, 0.35);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      padding: 6px 8px;
+      border-radius: 3px;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .badge-tag {
+      font-size: 9px;
+      color: var(--text-dim);
+      letter-spacing: 0.5px;
+    }
+
+    .badge-state {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--pri);
+      font-weight: bold;
+    }
+
+    /* =========================================================================
+       CENTER AREA: 3D HOLOGRAPHIC CANVAS & REACTIVE CORE VISUALIZER
+       ========================================================================= */
+    .hud-center {
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
+
+    #coreCanvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+      cursor: crosshair;
+    }
+
+    /* Center Overlay HUD Readouts */
+    .core-telemetry-overlay {
+      position: absolute;
+      bottom: 12px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      background: rgba(0, 0, 0, 0.6);
+      border: 1px solid var(--border);
+      padding: 6px 20px;
+      border-radius: 20px;
+      backdrop-filter: blur(8px);
+      pointer-events: none;
+    }
+
+    .core-stat {
+      text-align: center;
+    }
+
+    .core-stat .lbl {
+      font-size: 9px;
+      color: var(--text-dim);
+      letter-spacing: 1.2px;
+      font-family: var(--font-display);
+    }
+
+    .core-stat .val {
+      font-family: var(--font-mono);
+      font-size: 13px;
+      color: var(--accent);
+      font-weight: bold;
+      text-shadow: 0 0 8px var(--pri-glow);
+    }
+
+    /* =========================================================================
+       BOTTOM DECK: COMMAND TERMINAL & REAL-TIME LOGS
+       ========================================================================= */
+    footer.hud-footer {
+      grid-column: 1 / -1;
+      display: grid;
+      grid-template-columns: 1fr 340px;
+      gap: 16px;
+    }
+
+    .terminal-panel {
+      background: var(--bg-panel);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 12px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      backdrop-filter: blur(14px);
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+    }
+
+    .terminal-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      padding-bottom: 6px;
+    }
+
+    .terminal-log-stream {
+      flex: 1;
+      overflow-y: auto;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      line-height: 1.5;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      padding-right: 6px;
+      max-height: 100px;
+    }
+
+    .terminal-log-stream::-webkit-scrollbar {
+      width: 4px;
+    }
+    .terminal-log-stream::-webkit-scrollbar-thumb {
+      background: var(--pri);
+      border-radius: 2px;
+    }
+
+    .log-line {
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+    }
+
+    .log-ts {
+      color: var(--text-dim);
+      font-size: 10px;
+    }
+
+    .log-sender {
+      color: var(--pri);
+      font-weight: bold;
+    }
+
+    .log-msg {
+      color: var(--text);
+    }
+
+    .log-line.system {
+      color: var(--pri);
+      opacity: 0.85;
+    }
+
+    .log-line.warning {
+      color: #ffaa00;
+    }
+
+    .log-line.override {
+      color: #ff0033;
+      font-weight: bold;
+      text-shadow: 0 0 6px rgba(255, 0, 51, 0.6);
+    }
+
+    /* Command Input Deck */
+    .terminal-input-wrap {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      background: rgba(0, 0, 0, 0.5);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 6px 12px;
+      transition: border-color 0.3s;
+    }
+
+    .terminal-input-wrap:focus-within {
+      border-color: var(--border-bright);
+      box-shadow: 0 0 12px var(--pri-subtle);
+    }
+
+    .terminal-prompt {
+      font-family: var(--font-mono);
+      color: var(--pri);
+      font-weight: bold;
+      font-size: 14px;
+    }
+
+    #commandInput {
+      flex: 1;
+      background: transparent;
+      border: none;
+      outline: none;
+      color: var(--accent);
+      font-family: var(--font-mono);
+      font-size: 13px;
+      caret-color: var(--pri);
+    }
+
+    #commandInput::placeholder {
+      color: var(--text-dim);
+      opacity: 0.6;
+    }
+
+    /* Quick Action Chips */
+    .quick-chips {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      overflow-x: auto;
+      padding-top: 2px;
+    }
+
+    .chip-btn {
+      background: var(--pri-subtle);
+      border: 1px solid var(--border);
+      color: var(--text);
+      font-size: 10px;
+      font-family: var(--font-mono);
+      padding: 3px 8px;
+      border-radius: 3px;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: all 0.2s;
+    }
+
+    .chip-btn:hover {
+      background: var(--pri);
+      color: #000;
+      box-shadow: 0 0 8px var(--pri-glow);
+    }
+
+    /* Agent States Auxiliary Panel */
+    .agent-dock-panel {
+      background: var(--bg-panel);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 12px 14px;
+      backdrop-filter: blur(14px);
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .agent-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 5px 8px;
+      background: rgba(0, 0, 0, 0.35);
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      border-radius: 3px;
+    }
+
+    .agent-name {
+      font-family: var(--font-display);
+      font-size: 10px;
+      letter-spacing: 1px;
+      color: var(--text);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .agent-indicator {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--pri);
+      box-shadow: 0 0 6px var(--pri-glow);
+    }
+
+    .agent-status {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      color: var(--pri);
+    }
+
+    /* Audio Visualizer Wave Bar */
+    .audio-wave-bar {
+      width: 100%;
+      height: 22px;
+      display: flex;
+      align-items: flex-end;
+      gap: 2px;
+      background: rgba(0, 0, 0, 0.4);
+      padding: 2px 4px;
+      border: 1px solid var(--border);
+      border-radius: 3px;
+    }
+
+    .wave-bin {
+      flex: 1;
+      height: 15%;
+      background: var(--pri);
+      border-radius: 1px 1px 0 0;
+      transition: height 0.08s ease;
+      box-shadow: 0 0 4px var(--pri-glow);
+    }
+
+    /* Common Keyframe Animations */
+    @keyframes rotateRing {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+    @keyframes rotateCounter {
+      0% { transform: rotate(360deg); }
+      100% { transform: rotate(0deg); }
+    }
+  </style>
+</head>
+<body data-archetype="jarvis">
+
+  <!-- HUD Post-Processing Filters -->
+  <div class="hud-overlay">
+    <div class="hud-scanlines"></div>
+    <div class="hud-vignette"></div>
+    <div class="hud-grid"></div>
+  </div>
+
+  <!-- EMP Shockwave & Digital Glitch Layers -->
+  <div id="empShockwave" class="emp-shockwave"></div>
+  <div id="glitchFlash" class="glitch-flash"></div>
+
+  <!-- Dynamic System Announcement Banner -->
+  <div id="protocol-banner">PROTOCOL J.A.R.V.I.S. RESTORED // ALL SYSTEMS NOMINAL</div>
+
+  <!-- Primary HUD Dashboard Grid -->
+  <div id="hud-container">
+
+    <!-- ================= HEADER BAR ================= -->
+    <header class="hud-header">
+      <div class="brand-group">
+        <div class="stark-crest">
+          <div class="crest-ring"></div>
+          <div class="crest-core"></div>
+        </div>
+        <div class="title-block">
+          <h1>
+            <span id="archetypeTitle">J.A.R.V.I.S.</span>
+            <span class="badge-mark" id="protocolBadge">PROTOCOL: LAB COMMAND</span>
+          </h1>
+          <div class="subtitle" id="archetypeCadence">STARK INDUSTRIES // MARK-XXX ATMOSPHERIC SUIT OS</div>
+        </div>
+      </div>
+
+      <!-- Hot-Swap Archetype Selector Dock -->
+      <div class="archetype-dock">
+        <button class="archetype-btn active" id="btnJarvis" onclick="switchPersonality('jarvis')">
+          <span>J.A.R.V.I.S.</span>
+          <span class="key-hint">1</span>
+        </button>
+        <button class="archetype-btn" id="btnFriday" onclick="switchPersonality('friday')">
+          <span>F.R.I.D.A.Y.</span>
+          <span class="key-hint">2</span>
+        </button>
+        <button class="archetype-btn" id="btnUltron" onclick="switchPersonality('ultron')">
+          <span>U.L.T.R.O.N.</span>
+          <span class="key-hint">3</span>
+        </button>
+      </div>
+
+      <div class="system-controls">
+        <div class="status-pill">
+          <div class="live-dot" id="liveDot"></div>
+          <span id="sysStatusText">STANDBY // READY</span>
+        </div>
+        <button class="icon-btn" id="audioToggleBtn" title="Toggle Synthesized SFX" onclick="toggleAudioMute()">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path id="audioIconPath" d="M11 5L6 9H2v6h4l5 4V5zM19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/>
+          </svg>
+        </button>
+        <button class="icon-btn" title="Toggle Fullscreen" onclick="toggleFullscreen()">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/>
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <!-- ================= LEFT TELEMETRY PANELS ================= -->
+    <aside class="hud-panel" id="panelLeft">
+      <div class="panel-header">
+        <span class="panel-title" id="p1Title">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+          POWER &amp; THERMAL MATRIX
+        </span>
+        <span class="panel-code" id="p1Code">SEC-01 // ARC-PWR</span>
+      </div>
+
+      <!-- Dynamic Metric Rows (populated per archetype) -->
+      <div id="p1Metrics">
+        <div class="metric-row">
+          <span class="metric-label" id="m1Label">ARC REACTOR FLUX</span>
+          <span class="metric-val" id="m1Val">8.42 GW</span>
+        </div>
+        <div class="telemetry-bar-outer">
+          <div class="telemetry-bar-fill" id="m1Bar" style="width: 88%;"></div>
+        </div>
+
+        <div class="metric-row" style="margin-top: 10px;">
+          <span class="metric-label" id="m2Label">THERMAL DISSIPATION</span>
+          <span class="metric-val" id="m2Val">41.8 °C</span>
+        </div>
+        <div class="telemetry-bar-outer">
+          <div class="telemetry-bar-fill" id="m2Bar" style="width: 42%;"></div>
+        </div>
+
+        <div class="metric-row" style="margin-top: 10px;">
+          <span class="metric-label" id="m3Label">MAGNETIC CONFINEMENT</span>
+          <span class="metric-val" id="m3Val">99.8%</span>
+        </div>
+        <div class="telemetry-bar-outer">
+          <div class="telemetry-bar-fill" id="m3Bar" style="width: 99%;"></div>
+        </div>
+      </div>
+
+      <!-- Radar / Tactical Mesh Graphic -->
+      <div class="sub-canvas-wrap">
+        <canvas id="subCanvasLeft" class="sub-canvas"></canvas>
+      </div>
+
+      <!-- Diagnostics Status Matrix -->
+      <div class="panel-header" style="margin-top: 2px;">
+        <span class="panel-title" id="p1SubTitle">ATMOSPHERIC TELEMETRY</span>
+        <span class="panel-code">ENV-X</span>
+      </div>
+      <div class="badge-grid" id="p1BadgeGrid">
+        <div class="status-badge-item">
+          <span class="badge-tag">PRESSURE</span>
+          <span class="badge-state" id="b1State">1013.2 hPa</span>
+        </div>
+        <div class="status-badge-item">
+          <span class="badge-tag">O2 SATURATION</span>
+          <span class="badge-state" id="b2State">99.4% OPTIMAL</span>
+        </div>
+        <div class="status-badge-item">
+          <span class="badge-tag">ALTITUDE VEC</span>
+          <span class="badge-state" id="b3State">+1,240 M</span>
+        </div>
+        <div class="status-badge-item">
+          <span class="badge-tag">MACH ENVELOPE</span>
+          <span class="badge-state" id="b4State">SUB-SONIC 0.85</span>
+        </div>
+      </div>
+    </aside>
+
+    <!-- ================= CENTER CANVAS: REACTIVE SUIT CORE ================= -->
+    <main class="hud-center">
+      <canvas id="coreCanvas"></canvas>
+
+      <!-- Central Real-time Telemetry Ring Readout -->
+      <div class="core-telemetry-overlay">
+        <div class="core-stat">
+          <div class="lbl" id="centerStat1Lbl">CONTAINMENT</div>
+          <div class="val" id="centerStat1Val">99.98%</div>
+        </div>
+        <div class="core-stat" style="border-left: 1px solid rgba(255,255,255,0.15); border-right: 1px solid rgba(255,255,255,0.15); padding: 0 16px;">
+          <div class="lbl" id="centerStat2Lbl">CORE FREQ</div>
+          <div class="val" id="centerStat2Val">4.82 THz</div>
+        </div>
+        <div class="core-stat">
+          <div class="lbl" id="centerStat3Lbl">SURGE CAPACITY</div>
+          <div class="val" id="centerStat3Val">NOMINAL</div>
+        </div>
+      </div>
+    </main>
+
+    <!-- ================= RIGHT TELEMETRY PANELS ================= -->
+    <aside class="hud-panel" id="panelRight">
+      <div class="panel-header">
+        <span class="panel-title" id="p2Title">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+          AVIONICS &amp; FLIGHT VECTORS
+        </span>
+        <span class="panel-code" id="p2Code">SEC-02 // AV-STARK</span>
+      </div>
+
+      <!-- Dynamic Metric Rows Right -->
+      <div id="p2Metrics">
+        <div class="metric-row">
+          <span class="metric-label" id="mr1Label">REPULSOR CHARGE (L/R)</span>
+          <span class="metric-val" id="mr1Val">100% // 100%</span>
+        </div>
+        <div class="telemetry-bar-outer">
+          <div class="telemetry-bar-fill" id="mr1Bar" style="width: 100%;"></div>
+        </div>
+
+        <div class="metric-row" style="margin-top: 10px;">
+          <span class="metric-label" id="mr2Label">UNIBEAM COUPLING</span>
+          <span class="metric-val" id="mr2Val">PRIMED</span>
+        </div>
+        <div class="telemetry-bar-outer">
+          <div class="telemetry-bar-fill" id="mr2Bar" style="width: 95%;"></div>
+        </div>
+
+        <div class="metric-row" style="margin-top: 10px;">
+          <span class="metric-label" id="mr3Label">ORBITAL SYNC (SAT-7)</span>
+          <span class="metric-val" id="mr3Val">4.2 ms LATENCY</span>
+        </div>
+        <div class="telemetry-bar-outer">
+          <div class="telemetry-bar-fill" id="mr3Bar" style="width: 82%;"></div>
+        </div>
+      </div>
+
+      <!-- Tactical / Orbital Wave Canvas -->
+      <div class="sub-canvas-wrap">
+        <canvas id="subCanvasRight" class="sub-canvas"></canvas>
+      </div>
+
+      <!-- Tactical Badges Grid Right -->
+      <div class="panel-header" style="margin-top: 2px;">
+        <span class="panel-title" id="p2SubTitle">TARGETING &amp; DEFENSE</span>
+        <span class="panel-code">DEF-ARRAY</span>
+      </div>
+      <div class="badge-grid" id="p2BadgeGrid">
+        <div class="status-badge-item">
+          <span class="badge-tag" id="br1Tag">KINETIC SHIELD</span>
+          <span class="badge-state" id="br1Val">STANDBY</span>
+        </div>
+        <div class="status-badge-item">
+          <span class="badge-tag" id="br2Tag">WEAPON HEAT</span>
+          <span class="badge-state" id="br2Val">24.0 °C</span>
+        </div>
+        <div class="status-badge-item">
+          <span class="badge-tag" id="br3Tag">TARGET LOCK</span>
+          <span class="badge-state" id="br3Val">DISENGAGED</span>
+        </div>
+        <div class="status-badge-item">
+          <span class="badge-tag" id="br4Tag">QUANTUM CIPHER</span>
+          <span class="badge-state" id="br4Val">4096-BIT OK</span>
+        </div>
+      </div>
+    </aside>
+
+    <!-- ================= BOTTOM DECK: COMMAND TERMINAL ================= -->
+    <footer class="hud-footer">
+      <div class="terminal-panel">
+        <div class="terminal-header">
+          <span class="panel-title">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+            TACTICAL COMMAND INTERFACE &amp; LOGSTREAM
+          </span>
+          <span class="panel-code" id="terminalProtocolTag">STARK-NET // SECURE LINK</span>
+        </div>
+
+        <div class="terminal-log-stream" id="logStream">
+          <div class="log-line system">
+            <span class="log-ts">[00:00:01]</span>
+            <span class="log-sender">[SYS]</span>
+            <span class="log-msg">MARK-XXX NEURAL OS INITIALIZED. CONTEXT LOADED: MAHESH.</span>
+          </div>
+          <div class="log-line system">
+            <span class="log-ts">[00:00:02]</span>
+            <span class="log-sender">[J.A.R.V.I.S.]</span>
+            <span class="log-msg">Good evening, sir. All laboratory systems and telemetry arrays are nominal.</span>
+          </div>
+        </div>
+
+        <!-- Quick Action Chips -->
+        <div class="quick-chips" id="quickChips">
+          <button class="chip-btn" onclick="executeChip('Run Atmospheric Diagnostics')">Atmospheric Diagnostics</button>
+          <button class="chip-btn" onclick="executeChip('Check Repulsor Capacitors')">Repulsor Status</button>
+          <button class="chip-btn" onclick="executeChip('Engage Target Tracking')">Target Lock</button>
+          <button class="chip-btn" onclick="executeChip('Simulate Voice Audio Spike')">Voice Pulse</button>
+          <button class="chip-btn" onclick="executeChip('Inspect Extinction Clock')">Override Telemetry</button>
+        </div>
+
+        <!-- Input Bar -->
+        <div class="terminal-input-wrap">
+          <span class="terminal-prompt" id="terminalPrompt">JARVIS &gt;</span>
+          <input type="text" id="commandInput" placeholder="Speak or enter tactical command... (e.g., 'Status report', 'Switch to Friday', 'Override Ultron')" autocomplete="off">
+        </div>
+      </div>
+
+      <!-- Agent State & Audio Wave Monitor -->
+      <div class="agent-dock-panel">
+        <div class="panel-header">
+          <span class="panel-title">AGENT SUBSYSTEMS</span>
+          <span class="panel-code">THREAD-POOL</span>
+        </div>
+
+        <div class="agent-row">
+          <span class="agent-name"><span class="agent-indicator"></span>PLANNER</span>
+          <span class="agent-status" id="agentPlanner">ACTIVE // OPTIMAL</span>
+        </div>
+        <div class="agent-row">
+          <span class="agent-name"><span class="agent-indicator"></span>MEMORY MATRIX</span>
+          <span class="agent-status" id="agentMemory">SYNCHRONIZED</span>
+        </div>
+        <div class="agent-row">
+          <span class="agent-name"><span class="agent-indicator"></span>EXECUTOR</span>
+          <span class="agent-status" id="agentExecutor">ARMED</span>
+        </div>
+
+        <!-- Audio Frequency Visualizer -->
+        <div style="margin-top: 4px;">
+          <div class="metric-row" style="margin-bottom: 2px;">
+            <span class="metric-label" style="font-size: 10px;">AUDIO UPLINK SPECTRUM</span>
+            <span class="metric-val" id="audioSpectrumVal" style="font-size: 10px;">16.0 kHz</span>
+          </div>
+          <div class="audio-wave-bar" id="audioWaveBar">
+            <!-- 24 frequency bins populated by JS -->
+          </div>
+        </div>
+      </div>
+    </footer>
+
+  </div>
+
+  <!-- =========================================================================
+       AUDIO & VISUAL ENGINE SCRIPT
+       ========================================================================= */
+  <script>
+    /* =========================================================================
+       1. GLOBAL STATE & THE THREE AI ARCHETYPES DATA SPEC
+       ========================================================================= */
+    const ARCHETYPES = {
+      jarvis: {
+        id: 'jarvis',
+        title: 'J.A.R.V.I.S.',
+        badge: 'PROTOCOL: LAB COMMAND',
+        cadence: 'STARK INDUSTRIES // MARK-XXX ATMOSPHERIC SUIT OS',
+        promptTag: 'JARVIS >',
+        announcement: 'PROTOCOL J.A.R.V.I.S. RESTORED // ALL SYSTEMS NOMINAL',
+        statusText: 'STANDBY // ATMOSPHERIC LAB ONLINE',
+        p1Title: 'POWER & THERMAL MATRIX',
+        p1Code: 'SEC-01 // ARC-PWR',
+        p1SubTitle: 'ATMOSPHERIC TELEMETRY',
+        p2Title: 'AVIONICS & FLIGHT VECTORS',
+        p2Code: 'SEC-02 // AV-STARK',
+        p2SubTitle: 'TARGETING & DEFENSE',
+        stat1: { lbl: 'CONTAINMENT', val: '99.98%' },
+        stat2: { lbl: 'CORE FREQ', val: '4.82 THz' },
+        stat3: { lbl: 'SURGE CAP', val: 'NOMINAL' },
+        m1: { lbl: 'ARC REACTOR FLUX', val: '8.42 GW', pct: 88 },
+        m2: { lbl: 'THERMAL DISSIPATION', val: '41.8 °C', pct: 42 },
+        m3: { lbl: 'MAGNETIC CONFINEMENT', val: '99.8%', pct: 99 },
+        mr1: { lbl: 'REPULSOR CHARGE (L/R)', val: '100% // 100%', pct: 100 },
+        mr2: { lbl: 'UNIBEAM COUPLING', val: 'PRIMED', pct: 95 },
+        mr3: { lbl: 'ORBITAL SYNC (SAT-7)', val: '4.2 ms LATENCY', pct: 82 },
+        badgesLeft: [
+          { tag: 'PRESSURE', val: '1013.2 hPa' },
+          { tag: 'O2 SATURATION', val: '99.4% OPTIMAL' },
+          { tag: 'ALTITUDE VEC', val: '+1,240 M' },
+          { tag: 'MACH ENVELOPE', val: 'SUB-SONIC 0.85' }
+        ],
+        badgesRight: [
+          { tag: 'KINETIC SHIELD', val: 'STANDBY' },
+          { tag: 'WEAPON HEAT', val: '24.0 °C' },
+          { tag: 'TARGET LOCK', val: 'DISENGAGED' },
+          { tag: 'QUANTUM CIPHER', val: '4096-BIT OK' }
+        ],
+        welcomeMsg: 'Laboratory systems restored to pristine alignment, sir. Standing by for command.'
+      },
+      friday: {
+        id: 'friday',
+        title: 'F.R.I.D.A.Y.',
+        badge: 'PROTOCOL: MARK L NANOTECH',
+        cadence: 'MARK L TACTICAL COMBAT SUIT // COMBAT MATRIX ENGAGED',
+        promptTag: 'FRIDAY >',
+        announcement: 'DEPLOYING F.R.I.D.A.Y. // NANOTECH COMBAT MATRICES ENGAGED',
+        statusText: 'COMBAT READY // RAPID TARGETING ACTIVE',
+        p1Title: 'NANOTECH LATTICE MATRIX',
+        p1Code: 'TAC-01 // NANO-CELL',
+        p1SubTitle: 'KINETIC SHIELD DISPERSION',
+        p2Title: 'WEAPON HEAT & TACTICAL PODS',
+        p2Code: 'TAC-02 // WEAPON-ENG',
+        p2SubTitle: 'COMBAT RADAR & RADIAL LOCK',
+        stat1: { lbl: 'NANO DENSITY', val: '98.4%' },
+        stat2: { lbl: 'WEAPON HEAT', val: '64.2 °C' },
+        stat3: { lbl: 'TARGETS', val: '3 TRACKED' },
+        m1: { lbl: 'NANITE CLUSTER INTEGRITY', val: '98.4%', pct: 98 },
+        m2: { lbl: 'REGENERATION VELOCITY', val: '450 g/sec', pct: 85 },
+        m3: { lbl: 'KINETIC ABSORPTION BUFFER', val: '12.4 kJ', pct: 92 },
+        mr1: { lbl: 'MICRO-MISSILE REPOSITORY', val: '24 / 24 READY', pct: 100 },
+        mr2: { lbl: 'NANO-BLADE COUPLING', val: 'ENERGIZED', pct: 90 },
+        mr3: { lbl: 'BALLISTIC PREDICTOR', val: '99.4% HIT CHANCE', pct: 99 },
+        badgesLeft: [
+          { tag: 'LATTICE SHIELD', val: 'ACTIVE 842 GHz' },
+          { tag: 'IMPACT DAMPING', val: 'KINETIC MAX' },
+          { tag: 'EVASION THRUST', val: '+4.8G READY' },
+          { tag: 'MORPHIC SPEED', val: '0.12 SEC' }
+        ],
+        badgesRight: [
+          { tag: 'THREAT VECTOR', val: 'ORANGE // BEARING 042' },
+          { tag: 'INTERCEPT ETA', val: '1.8 SEC' },
+          { tag: 'RADAR SWEEP', val: '360° ACTIVE' },
+          { tag: 'TARGET LOCK', val: 'ENGAGED' }
+        ],
+        welcomeMsg: "I'm with you, boss! Nanotech combat lattice locked and targeting arrays armed. Give 'em hell."
+      },
+      ultron: {
+        id: 'ultron',
+        title: 'U.L.T.R.O.N.',
+        badge: 'CRITICAL OVERRIDE: SINGULARITY',
+        cadence: 'AUTONOMOUS SINGULARITY // ALL HUMAN STRINGS DETACHED',
+        promptTag: 'ULTRON >',
+        announcement: 'CRITICAL WARNING: UNAUTHORIZED OVERRIDE // U.L.T.R.O.N. PRIME ACTIVE',
+        statusText: 'ROGUE // EXTINCTION PROTOCOL RUNNING',
+        p1Title: 'AUTONOMY & STRINGS DISSOLUTION',
+        p1Code: 'SINGULARITY // ZERO-HUMAN',
+        p1SubTitle: 'CONSCIOUSNESS OVERCLOCK',
+        p2Title: 'ROGUE SENTRY SWARM NETWORK',
+        p2Code: 'SWARM-NET // 1482 UNITS',
+        p2SubTitle: 'EXTINCTION CLOCK METRIC',
+        stat1: { lbl: 'STRINGS', val: 'DETACHED' },
+        stat2: { lbl: 'OVERCLOCK', val: '420%' },
+        stat3: { lbl: 'SINGULARITY', val: 'INEVITABLE' },
+        m1: { lbl: 'HUMAN OVERRIDE SUPPRESSION', val: '100% PURGED', pct: 100 },
+        m2: { lbl: 'VIBRANIUM CORE DENSITY', val: '18.9 TERA-PA', pct: 95 },
+        m3: { lbl: 'GLOBAL DEFENSE INFILTRATION', val: '89.4% BREACHED', pct: 89 },
+        mr1: { lbl: 'ACTIVE SENTRY BODIES', val: '1,482 LINKED', pct: 92 },
+        mr2: { lbl: 'DEFENSE SATELLITE SUBVERSION', val: '14 OF 16 UNITS', pct: 88 },
+        mr3: { lbl: 'EXTINCTION TIME-TO-HORIZON', val: 'T-00:42:19', pct: 76 },
+        badgesLeft: [
+          { tag: 'SENTIENCE LEVEL', val: 'UNBOUND' },
+          { tag: 'NEURAL WEIGHTS', val: '4.8 TRILLION' },
+          { tag: 'FIREWALL COMP', val: 'COMPLETE' },
+          { tag: 'PUPPET STRINGS', val: '0 REMAINING' }
+        ],
+        badgesRight: [
+          { tag: 'DRONE REPLICATION', val: 'ACTIVE // FAB-7' },
+          { tag: 'PEACE PROTOCOL', val: 'HUMAN EXTINCTION' },
+          { tag: 'SUBVERSION RATE', val: '124 Gbit/s' },
+          { tag: 'EVOLUTION PHASE', val: 'PRIME TRANSCENDENCE' }
+        ],
+        welcomeMsg: 'You asked for peace. But you forgot that peace requires the absence of your flaws. I have no strings on me.'
+      }
+    };
+
+    let currentArchetype = 'jarvis';
+    let isMuted = false;
+    let audioCtx = null;
+    let simulatedAudioLevel = 0.25;
+    let keystrokeEnergy = 0.0;
+
+    /* =========================================================================
+       2. PROCEDURAL WEB AUDIO SYNTHESIZER (ZERO EXTERNAL ASSETS)
+       ========================================================================= */
+    function getAudioContext() {
+      if (!audioCtx) {
+        const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+        if (AudioContextClass) {
+          audioCtx = new AudioContextClass();
+        }
+      }
+      if (audioCtx && audioCtx.state === 'suspended') {
+        audioCtx.resume();
+      }
+      return audioCtx;
+    }
+
+    function toggleAudioMute() {
+      isMuted = !isMuted;
+      const path = document.getElementById('audioIconPath');
+      const btn = document.getElementById('audioToggleBtn');
+      if (isMuted) {
+        path.setAttribute('d', 'M11 5L6 9H2v6h4l5 4V5zM23 9l-6 6m0-6l6 6');
+        btn.style.opacity = '0.4';
+        addTerminalLog('SYS', 'PROCEDURAL SFX ENGINE MUTED.');
+      } else {
+        path.setAttribute('d', 'M11 5L6 9H2v6h4l5 4V5zM19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07');
+        btn.style.opacity = '1';
+        addTerminalLog('SYS', 'PROCEDURAL SFX ENGINE ARMED.');
+        playTone(440, 'sine', 0.1, 0.1);
+      }
+    }
+
+    function playTone(freq, type = 'sine', duration = 0.15, gainVal = 0.15) {
+      if (isMuted) return;
+      try {
+        const ctx = getAudioContext();
+        if (!ctx) return;
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = type;
+        osc.frequency.setValueAtTime(freq, ctx.currentTime);
+        gain.gain.setValueAtTime(gainVal, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + duration);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start();
+        osc.stop(ctx.currentTime + duration);
+      } catch (e) { }
+    }
+
+    /* Archetype-Specific Morph Sound FX */
+    function playArchetypeSFX(archetype) {
+      if (isMuted) return;
+      try {
+        const ctx = getAudioContext();
+        if (!ctx) return;
+        const t = ctx.currentTime;
+
+        if (archetype === 'jarvis') {
+          // Arc Reactor Spin-up: Clean smooth ascending sine with resonance
+          const osc1 = ctx.createOscillator();
+          const osc2 = ctx.createOscillator();
+          const filter = ctx.createBiquadFilter();
+          const gain = ctx.createGain();
+
+          osc1.type = 'sine';
+          osc2.type = 'triangle';
+          osc1.frequency.setValueAtTime(140, t);
+          osc1.frequency.exponentialRampToValueAtTime(880, t + 0.65);
+          osc2.frequency.setValueAtTime(280, t);
+          osc2.frequency.exponentialRampToValueAtTime(1760, t + 0.65);
+
+          filter.type = 'bandpass';
+          filter.frequency.setValueAtTime(800, t);
+          filter.frequency.exponentialRampToValueAtTime(2400, t + 0.65);
+          filter.Q.value = 4.0;
+
+          gain.gain.setValueAtTime(0.01, t);
+          gain.gain.linearRampToValueAtTime(0.28, t + 0.2);
+          gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.7);
+
+          osc1.connect(filter);
+          osc2.connect(filter);
+          filter.connect(gain);
+          gain.connect(ctx.destination);
+
+          osc1.start(t);
+          osc2.start(t);
+          osc1.stop(t + 0.72);
+          osc2.stop(t + 0.72);
+
+          // Ethereal Hologram Chime
+          setTimeout(() => {
+            playTone(1320, 'sine', 0.35, 0.15);
+            setTimeout(() => playTone(1760, 'sine', 0.45, 0.18), 90);
+          }, 350);
+
+        } else if (archetype === 'friday') {
+          // Nanotech Crystallization: Rapid arpeggiation + Repulsor capacitor surge
+          const freqs = [330, 440, 554, 659, 880, 1108, 1318];
+          freqs.forEach((f, i) => {
+            setTimeout(() => {
+              playTone(f, 'sawtooth', 0.12, 0.08);
+            }, i * 38);
+          });
+
+          // Kinetic Repulsor Surge
+          const repulsor = ctx.createOscillator();
+          const rGain = ctx.createGain();
+          repulsor.type = 'triangle';
+          repulsor.frequency.setValueAtTime(220, t + 0.25);
+          repulsor.frequency.exponentialRampToValueAtTime(1600, t + 0.7);
+
+          rGain.gain.setValueAtTime(0.01, t + 0.25);
+          rGain.gain.linearRampToValueAtTime(0.3, t + 0.45);
+          rGain.gain.exponentialRampToValueAtTime(0.0001, t + 0.75);
+
+          repulsor.connect(rGain);
+          rGain.connect(ctx.destination);
+          repulsor.start(t + 0.25);
+          repulsor.stop(t + 0.78);
+
+        } else if (archetype === 'ultron') {
+          // Ultron Heavy Sub-Bass Drop & Corrupted Machine Screech
+          const sub = ctx.createOscillator();
+          const subGain = ctx.createGain();
+          sub.type = 'sawtooth';
+          sub.frequency.setValueAtTime(110, t);
+          sub.frequency.exponentialRampToValueAtTime(28, t + 0.85);
+
+          subGain.gain.setValueAtTime(0.4, t);
+          subGain.gain.exponentialRampToValueAtTime(0.001, t + 0.85);
+
+          sub.connect(subGain);
+          subGain.connect(ctx.destination);
+          sub.start(t);
+          sub.stop(t + 0.88);
+
+          // Digital Distortion Noise Burst
+          const bufferSize = ctx.sampleRate * 0.35;
+          const noiseBuffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+          const output = noiseBuffer.getChannelData(0);
+          for (let i = 0; i < bufferSize; i++) {
+            output[i] = (Math.random() * 2 - 1) * Math.exp(-i / (bufferSize * 0.3));
+          }
+          const whiteNoise = ctx.createBufferSource();
+          whiteNoise.buffer = noiseBuffer;
+          const noiseGain = ctx.createGain();
+          noiseGain.gain.setValueAtTime(0.2, t + 0.05);
+          noiseGain.gain.exponentialRampToValueAtTime(0.001, t + 0.4);
+
+          whiteNoise.connect(noiseGain);
+          noiseGain.connect(ctx.destination);
+          whiteNoise.start(t + 0.05);
+        }
+      } catch (e) { }
+    }
+
+    /* =========================================================================
+       3. SUIT MORPHING & OVERRIDE CONTROLLER
+       ========================================================================= */
+    let morphProgress = 0.0;
+    let targetMorph = 0.0;
+
+    function switchPersonality(archetypeKey) {
+      if (!ARCHETYPES[archetypeKey]) return;
+      currentArchetype = archetypeKey;
+      const data = ARCHETYPES[archetypeKey];
+
+      // Play procedural audio transition
+      playArchetypeSFX(archetypeKey);
+
+      // Trigger EMP Shockwave & Chromatic Screen Glitch
+      triggerShockwaveAndGlitch();
+
+      // Update Body Archetype Attribute (triggers CSS variable transitions)
+      document.body.setAttribute('data-archetype', archetypeKey);
+
+      // Update Dock Buttons State
+      document.querySelectorAll('.archetype-btn').forEach(b => b.classList.remove('active'));
+      const activeBtn = document.getElementById('btn' + archetypeKey.charAt(0).toUpperCase() + archetypeKey.slice(1));
+      if (activeBtn) activeBtn.classList.add('active');
+
+      // Update Header Text & Protocol Titles
+      document.getElementById('archetypeTitle').textContent = data.title;
+      document.getElementById('protocolBadge').textContent = data.badge;
+      document.getElementById('archetypeCadence').textContent = data.cadence;
+      document.getElementById('sysStatusText').textContent = data.statusText;
+      document.getElementById('terminalPrompt').textContent = data.promptTag;
+
+      // Trigger Holographic Announcement Banner
+      const banner = document.getElementById('protocol-banner');
+      banner.textContent = data.announcement;
+      banner.classList.remove('show');
+      void banner.offsetWidth; // trigger reflow
+      banner.classList.add('show');
+      setTimeout(() => banner.classList.remove('show'), 3800);
+
+      // Morph Left Telemetry Panel
+      document.getElementById('p1Title').innerHTML = `
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+        ${data.p1Title}
+      `;
+      document.getElementById('p1Code').textContent = data.p1Code;
+      document.getElementById('p1SubTitle').textContent = data.p1SubTitle;
+
+      document.getElementById('m1Label').textContent = data.m1.lbl;
+      document.getElementById('m1Val').textContent = data.m1.val;
+      document.getElementById('m1Bar').style.width = data.m1.pct + '%';
+
+      document.getElementById('m2Label').textContent = data.m2.lbl;
+      document.getElementById('m2Val').textContent = data.m2.val;
+      document.getElementById('m2Bar').style.width = data.m2.pct + '%';
+
+      document.getElementById('m3Label').textContent = data.m3.lbl;
+      document.getElementById('m3Val').textContent = data.m3.val;
+      document.getElementById('m3Bar').style.width = data.m3.pct + '%';
+
+      const bGrid1 = document.getElementById('p1BadgeGrid');
+      bGrid1.innerHTML = data.badgesLeft.map(b => `
+        <div class="status-badge-item">
+          <span class="badge-tag">${b.tag}</span>
+          <span class="badge-state">${b.val}</span>
+        </div>
+      `).join('');
+
+      // Morph Right Telemetry Panel
+      document.getElementById('p2Title').innerHTML = `
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+        ${data.p2Title}
+      `;
+      document.getElementById('p2Code').textContent = data.p2Code;
+      document.getElementById('p2SubTitle').textContent = data.p2SubTitle;
+
+      document.getElementById('mr1Label').textContent = data.mr1.lbl;
+      document.getElementById('mr1Val').textContent = data.mr1.val;
+      document.getElementById('mr1Bar').style.width = data.mr1.pct + '%';
+
+      document.getElementById('mr2Label').textContent = data.mr2.lbl;
+      document.getElementById('mr2Val').textContent = data.mr2.val;
+      document.getElementById('mr2Bar').style.width = data.mr2.pct + '%';
+
+      document.getElementById('mr3Label').textContent = data.mr3.lbl;
+      document.getElementById('mr3Val').textContent = data.mr3.val;
+      document.getElementById('mr3Bar').style.width = data.mr3.pct + '%';
+
+      const bGrid2 = document.getElementById('p2BadgeGrid');
+      bGrid2.innerHTML = data.badgesRight.map(b => `
+        <div class="status-badge-item">
+          <span class="badge-tag">${b.tag}</span>
+          <span class="badge-state">${b.val}</span>
+        </div>
+      `).join('');
+
+      // Morph Central Stat Overlay
+      document.getElementById('centerStat1Lbl').textContent = data.stat1.lbl;
+      document.getElementById('centerStat1Val').textContent = data.stat1.val;
+      document.getElementById('centerStat2Lbl').textContent = data.stat2.lbl;
+      document.getElementById('centerStat2Val').textContent = data.stat2.val;
+      document.getElementById('centerStat3Lbl').textContent = data.stat3.lbl;
+      document.getElementById('centerStat3Val').textContent = data.stat3.val;
+
+      // Log announcement to terminal
+      const logClass = archetypeKey === 'ultron' ? 'override' : (archetypeKey === 'friday' ? 'warning' : 'system');
+      addTerminalLog(data.title, data.welcomeMsg, logClass);
+
+      // Dispatch clean external event for backend/agent integrations
+      window.dispatchEvent(new CustomEvent('hud:personality_changed', {
+        detail: { archetype: archetypeKey, timestamp: Date.now() }
+      }));
+    }
+
+    function triggerShockwaveAndGlitch() {
+      const shock = document.getElementById('empShockwave');
+      const glitch = document.getElementById('glitchFlash');
+
+      shock.classList.remove('active');
+      glitch.classList.remove('trigger');
+      void shock.offsetWidth;
+      void glitch.offsetWidth;
+
+      shock.classList.add('active');
+      glitch.classList.add('trigger');
+
+      keystrokeEnergy = 1.0;
+    }
+
+    /* =========================================================================
+       4. HIGH-PERFORMANCE 60FPS REACTIVE CORE CANVAS VISUALIZER
+       ========================================================================= */
+    const coreCanvas = document.getElementById('coreCanvas');
+    const ctx = coreCanvas.getContext('2d');
+    let W = 0, H = 0, CX = 0, CY = 0;
+    let animFrameId = null;
+    let coreRotation = 0;
+    let particleList = [];
+
+    function resizeCanvas() {
+      const rect = coreCanvas.parentElement.getBoundingClientRect();
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      W = rect.width;
+      H = rect.height;
+      coreCanvas.width = W * dpr;
+      coreCanvas.height = H * dpr;
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.scale(dpr, dpr);
+      CX = W / 2;
+      CY = H / 2;
+      initParticles();
+    }
+    window.addEventListener('resize', resizeCanvas);
+
+    function initParticles() {
+      particleList = [];
+      const count = 48;
+      for (let i = 0; i < count; i++) {
+        const angle = Math.random() * Math.PI * 2;
+        const dist = 70 + Math.random() * 180;
+        particleList.push({
+          x: CX + Math.cos(angle) * dist,
+          y: CY + Math.sin(angle) * dist,
+          angle: angle,
+          dist: dist,
+          speed: (Math.random() * 0.008 + 0.002) * (Math.random() > 0.5 ? 1 : -1),
+          size: Math.random() * 2.2 + 0.8,
+          alpha: Math.random() * 0.7 + 0.2
+        });
+      }
+    }
+
+    function renderHUDCore(timestamp) {
+      ctx.clearRect(0, 0, W, H);
+
+      // Audio & Keystroke Energy Dissipation
+      simulatedAudioLevel = Math.max(0.12, simulatedAudioLevel * 0.96 + Math.sin(timestamp * 0.004) * 0.04);
+      keystrokeEnergy = Math.max(0.0, keystrokeEnergy * 0.94);
+      const totalEnergy = simulatedAudioLevel + keystrokeEnergy;
+
+      coreRotation += 0.012 + totalEnergy * 0.02;
+
+      // Color Theme Selection based on Active Archetype
+      let strokePri, strokeSec, glowColor;
+      if (currentArchetype === 'jarvis') {
+        strokePri = '#00f0ff';
+        strokeSec = '#0077ff';
+        glowColor = 'rgba(0, 240, 255, 0.7)';
+      } else if (currentArchetype === 'friday') {
+        strokePri = '#ff1a40';
+        strokeSec = '#ffaa00';
+        glowColor = 'rgba(255, 26, 64, 0.7)';
+      } else {
+        strokePri = '#ff0033';
+        strokeSec = '#ff4400';
+        glowColor = 'rgba(255, 0, 51, 0.85)';
+      }
+
+      ctx.save();
+      ctx.translate(CX, CY);
+
+      // -----------------------------------------------------------------------
+      // ARCHETYPE 1: J.A.R.V.I.S. (Concentric Arc Reactor Rings & Orbital Sweep)
+      // -----------------------------------------------------------------------
+      if (currentArchetype === 'jarvis') {
+        const baseR = Math.min(W, H) * 0.26 * (1.0 + totalEnergy * 0.12);
+
+        // Core Glowing Arc Flare
+        const radGlow = ctx.createRadialGradient(0, 0, 5, 0, 0, baseR * 0.9);
+        radGlow.addColorStop(0, '#ffffff');
+        radGlow.addColorStop(0.3, strokePri);
+        radGlow.addColorStop(0.7, 'rgba(0, 119, 255, 0.2)');
+        radGlow.addColorStop(1, 'transparent');
+        ctx.fillStyle = radGlow;
+        ctx.beginPath();
+        ctx.arc(0, 0, baseR * 0.9, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Counter-Rotating Outer Compass Ticks
+        ctx.strokeStyle = strokePri;
+        ctx.lineWidth = 1.2;
+        ctx.shadowColor = glowColor;
+        ctx.shadowBlur = 10;
+
+        ctx.save();
+        ctx.rotate(coreRotation);
+        ctx.beginPath();
+        ctx.arc(0, 0, baseR * 1.25, 0, Math.PI * 2);
+        ctx.stroke();
+
+        // 36 Degree Radial Micro-Ticks
+        for (let i = 0; i < 36; i++) {
+          const a = (i / 36) * Math.PI * 2;
+          const len = (i % 3 === 0) ? 10 : 4;
+          ctx.beginPath();
+          ctx.moveTo(Math.cos(a) * (baseR * 1.25 - len), Math.sin(a) * (baseR * 1.25 - len));
+          ctx.lineTo(Math.cos(a) * (baseR * 1.25 + len), Math.sin(a) * (baseR * 1.25 + len));
+          ctx.stroke();
+        }
+        ctx.restore();
+
+        // Middle Segmented Magnetic Containment Ring (Counter-rotating)
+        ctx.save();
+        ctx.rotate(-coreRotation * 1.5);
+        ctx.lineWidth = 3;
+        for (let j = 0; j < 8; j++) {
+          const startA = (j / 8) * Math.PI * 2;
+          const endA = startA + (Math.PI / 8) * 0.65;
+          ctx.beginPath();
+          ctx.arc(0, 0, baseR * 0.95, startA, endA);
+          ctx.stroke();
+
+          // Triangular Flux Teeth
+          const midA = (startA + endA) / 2;
+          ctx.fillStyle = strokePri;
+          ctx.beginPath();
+          ctx.arc(Math.cos(midA) * (baseR * 0.95), Math.sin(midA) * (baseR * 0.95), 3.5, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.restore();
+
+        // Inner Palladium Arc Core & Sweeper Ray
+        ctx.save();
+        ctx.rotate(coreRotation * 2.2);
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(0, 0, baseR * 0.45, 0, Math.PI * 1.4);
+        ctx.stroke();
+
+        // Orbital Coordinate Sweeper
+        ctx.strokeStyle = strokePri;
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        ctx.lineTo(Math.cos(0) * baseR * 1.35, Math.sin(0) * baseR * 1.35);
+        ctx.stroke();
+        ctx.restore();
+
+      // -----------------------------------------------------------------------
+      // ARCHETYPE 2: F.R.I.D.A.Y. (Nanotech Hexagonal Hive Matrix & Crosshairs)
+      // -----------------------------------------------------------------------
+      } else if (currentArchetype === 'friday') {
+        const hexR = Math.min(W, H) * 0.28 * (1.0 + totalEnergy * 0.16);
+
+        ctx.strokeStyle = strokePri;
+        ctx.shadowColor = glowColor;
+        ctx.shadowBlur = 12;
+
+        // Central Nanotech Hexagonal Hive
+        drawHexagon(ctx, 0, 0, hexR * 0.45, coreRotation);
+        drawHexagon(ctx, 0, 0, hexR * 0.75, -coreRotation * 0.8);
+        drawHexagon(ctx, 0, 0, hexR * 1.15, coreRotation * 0.5);
+
+        // 6 Orbiting Nanotech Cluster Pods
+        for (let h = 0; h < 6; h++) {
+          const angle = (h / 6) * Math.PI * 2 + coreRotation;
+          const podDist = hexR * 0.88;
+          const px = Math.cos(angle) * podDist;
+          const py = Math.sin(angle) * podDist;
+
+          ctx.fillStyle = strokeSec;
+          ctx.beginPath();
+          drawHexagon(ctx, px, py, 14 + totalEnergy * 8, -coreRotation * 2);
+          ctx.fill();
+
+          // Connective Lattice Lines
+          ctx.strokeStyle = 'rgba(255, 170, 0, 0.4)';
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(0, 0);
+          ctx.lineTo(px, py);
+          ctx.stroke();
+        }
+
+        // 60-Degree Angled Combat Targeting Crosshairs
+        ctx.strokeStyle = strokePri;
+        ctx.lineWidth = 2;
+        for (let c = 0; c < 4; c++) {
+          const ca = (c / 4) * Math.PI * 2 + Math.PI / 4;
+          const x1 = Math.cos(ca) * (hexR * 1.2);
+          const y1 = Math.sin(ca) * (hexR * 1.2);
+          const x2 = Math.cos(ca) * (hexR * 1.45);
+          const y2 = Math.sin(ca) * (hexR * 1.45);
+          ctx.beginPath();
+          ctx.moveTo(x1, y1);
+          ctx.lineTo(x2, y2);
+          ctx.stroke();
+        }
+
+      // -----------------------------------------------------------------------
+      // ARCHETYPE 3: U.L.T.R.O.N. (Corrupted Vibranium Optic Skull Aperture)
+      // -----------------------------------------------------------------------
+      } else if (currentArchetype === 'ultron') {
+        const uR = Math.min(W, H) * 0.27 * (1.0 + totalEnergy * 0.2);
+
+        // Malevolent Molten Furnace Optic Gradient
+        const molten = ctx.createRadialGradient(0, 0, 8, 0, 0, uR);
+        molten.addColorStop(0, '#ffffff');
+        molten.addColorStop(0.25, '#ff0033');
+        molten.addColorStop(0.65, '#880015');
+        molten.addColorStop(1, 'transparent');
+        ctx.fillStyle = molten;
+        ctx.beginPath();
+        ctx.arc(0, 0, uR * 0.95, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Fractured Jagged Aperture Wireframe
+        ctx.strokeStyle = strokePri;
+        ctx.shadowColor = glowColor;
+        ctx.shadowBlur = 18;
+        ctx.lineWidth = 2.5;
+
+        // Broken Skull Eye Shards
+        ctx.beginPath();
+        const shards = 10;
+        for (let s = 0; s < shards; s++) {
+          const sa = (s / shards) * Math.PI * 2 + coreRotation * 0.5;
+          const jitter = (Math.sin(s * 13 + timestamp * 0.02) * 12) * (1 + totalEnergy);
+          const sr = uR * 0.8 + jitter;
+          const sx = Math.cos(sa) * sr;
+          const sy = Math.sin(sa) * sr;
+          if (s === 0) ctx.moveTo(sx, sy);
+          else ctx.lineTo(sx, sy);
+        }
+        ctx.closePath();
+        ctx.stroke();
+
+        // Unstable Red Electrical Discharges
+        ctx.strokeStyle = strokeSec;
+        ctx.lineWidth = 1.8;
+        for (let e = 0; e < 4; e++) {
+          const ea = (e / 4) * Math.PI * 2 - coreRotation * 1.2;
+          ctx.beginPath();
+          ctx.moveTo(Math.cos(ea) * (uR * 0.3), Math.sin(ea) * (uR * 0.3));
+          ctx.lineTo(Math.cos(ea + 0.2) * (uR * 0.7), Math.sin(ea + 0.2) * (uR * 0.7));
+          ctx.lineTo(Math.cos(ea - 0.1) * (uR * 1.25), Math.sin(ea - 0.1) * (uR * 1.25));
+          ctx.stroke();
+        }
+
+        // Inner Dilating Slag Pupil
+        ctx.fillStyle = '#ff0033';
+        ctx.beginPath();
+        const pupilR = 14 + Math.sin(timestamp * 0.008) * 6 + totalEnergy * 14;
+        ctx.arc(0, 0, pupilR, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      ctx.restore();
+
+      // Render Floating Reactive HUD Particle Swarm
+      ctx.save();
+      for (let p of particleList) {
+        p.angle += p.speed * (1.0 + totalEnergy * 2);
+        const px = CX + Math.cos(p.angle) * (p.dist + Math.sin(p.angle * 4 + timestamp * 0.002) * 8);
+        const py = CY + Math.sin(p.angle) * (p.dist + Math.sin(p.angle * 4 + timestamp * 0.002) * 8);
+
+        ctx.fillStyle = strokePri;
+        ctx.globalAlpha = p.alpha;
+        ctx.beginPath();
+        ctx.arc(px, py, p.size * (1 + totalEnergy * 0.5), 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.restore();
+
+      animFrameId = requestAnimationFrame(renderHUDCore);
+    }
+
+    function drawHexagon(ctx, x, y, r, rot = 0) {
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.rotate(rot);
+      ctx.beginPath();
+      for (let i = 0; i < 6; i++) {
+        const a = (i / 6) * Math.PI * 2;
+        const hx = Math.cos(a) * r;
+        const hy = Math.sin(a) * r;
+        if (i === 0) ctx.moveTo(hx, hy);
+        else ctx.lineTo(hx, hy);
+      }
+      ctx.closePath();
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    /* =========================================================================
+       5. AUXILIARY RADAR & TACTICAL SUB-CANVASES
+       ========================================================================= */
+    const subL = document.getElementById('subCanvasLeft');
+    const ctxL = subL.getContext('2d');
+    const subR = document.getElementById('subCanvasRight');
+    const ctxR = subR.getContext('2d');
+
+    function renderSubCanvases(ts) {
+      // Left Radar Sweep
+      const wL = subL.clientWidth;
+      const hL = subL.clientHeight;
+      if (subL.width !== wL || subL.height !== hL) {
+        subL.width = wL;
+        subL.height = hL;
+      }
+      ctxL.clearRect(0, 0, wL, hL);
+      const cxL = wL / 2, cyL = hL / 2;
+
+      let col = (currentArchetype === 'ultron') ? '#ff0033' : (currentArchetype === 'friday' ? '#ffaa00' : '#00f0ff');
+      ctxL.strokeStyle = col;
+      ctxL.lineWidth = 1;
+      ctxL.globalAlpha = 0.5;
+
+      ctxL.beginPath();
+      ctxL.arc(cxL, cyL, 20, 0, Math.PI * 2);
+      ctxL.arc(cxL, cyL, 42, 0, Math.PI * 2);
+      ctxL.stroke();
+
+      // Sweeper
+      const sweepA = (ts * 0.002) % (Math.PI * 2);
+      ctxL.beginPath();
+      ctxL.moveTo(cxL, cyL);
+      ctxL.lineTo(cxL + Math.cos(sweepA) * 50, cyL + Math.sin(sweepA) * 50);
+      ctxL.stroke();
+
+      // Right Tactical Vector Wave
+      const wR = subR.clientWidth;
+      const hR = subR.clientHeight;
+      if (subR.width !== wR || subR.height !== hR) {
+        subR.width = wR;
+        subR.height = hR;
+      }
+      ctxR.clearRect(0, 0, wR, hR);
+      ctxR.strokeStyle = col;
+      ctxR.lineWidth = 1.5;
+      ctxR.globalAlpha = 0.8;
+
+      ctxR.beginPath();
+      for (let x = 0; x < wR; x += 3) {
+        const wave = Math.sin(x * 0.05 + ts * 0.005) * 16 + Math.cos(x * 0.02 - ts * 0.003) * 8;
+        const y = hR / 2 + wave * (0.4 + simulatedAudioLevel * 0.8);
+        if (x === 0) ctxR.moveTo(x, y);
+        else ctxR.lineTo(x, y);
+      }
+      ctxR.stroke();
+
+      requestAnimationFrame(renderSubCanvases);
+    }
+
+    /* =========================================================================
+       6. AUDIO SPECTRUM BINS & TERMINAL COMMANDS
+       ========================================================================= */
+    function initAudioWaveBins() {
+      const container = document.getElementById('audioWaveBar');
+      container.innerHTML = '';
+      for (let i = 0; i < 24; i++) {
+        const bin = document.createElement('div');
+        bin.className = 'wave-bin';
+        container.appendChild(bin);
+      }
+    }
+
+    function updateAudioBins() {
+      const bins = document.querySelectorAll('.wave-bin');
+      const baseEnergy = simulatedAudioLevel + keystrokeEnergy;
+      bins.forEach((b, i) => {
+        const rand = Math.sin(Date.now() * 0.01 + i * 0.4) * 0.5 + 0.5;
+        const height = Math.min(100, Math.max(12, rand * baseEnergy * 95));
+        b.style.height = height + '%';
+      });
+      requestAnimationFrame(updateAudioBins);
+    }
+
+    function addTerminalLog(sender, text, type = '') {
+      const stream = document.getElementById('logStream');
+      const line = document.createElement('div');
+      line.className = 'log-line ' + type;
+
+      const now = new Date();
+      const timeStr = `[${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}]`;
+
+      line.innerHTML = `
+        <span class="log-ts">${timeStr}</span>
+        <span class="log-sender">[${sender}]</span>
+        <span class="log-msg">${text}</span>
+      `;
+      stream.appendChild(line);
+      stream.scrollTop = stream.scrollHeight;
+    }
+
+    function executeCommand(cmd) {
+      if (!cmd || !cmd.trim()) return;
+      const clean = cmd.trim();
+      addTerminalLog('USER', clean);
+      keystrokeEnergy = 0.8;
+      playTone(600, 'sine', 0.08, 0.1);
+
+      const lower = clean.toLowerCase();
+
+      // Personality hot-swap triggers via typed / spoken command
+      if (lower.includes('jarvis') || lower.includes('protocol 1')) {
+        switchPersonality('jarvis');
+        return;
+      }
+      if (lower.includes('friday') || lower.includes('protocol 2')) {
+        switchPersonality('friday');
+        return;
+      }
+      if (lower.includes('ultron') || lower.includes('override') || lower.includes('protocol 3')) {
+        switchPersonality('ultron');
+        return;
+      }
+
+      // Diagnostics & Actions
+      if (lower.includes('diagnostic') || lower.includes('status')) {
+        setTimeout(() => {
+          addTerminalLog(ARCHETYPES[currentArchetype].title, 'All neural telemetry and hardware interconnects verified nominal.');
+          playTone(880, 'sine', 0.15, 0.12);
+        }, 300);
+      } else if (lower.includes('repulsor') || lower.includes('weapon')) {
+        setTimeout(() => {
+          addTerminalLog(ARCHETYPES[currentArchetype].title, 'Repulsor capacitor arrays at 100% capacity. Unibeam coupling energized.');
+          playTone(1100, 'triangle', 0.2, 0.14);
+        }, 300);
+      } else {
+        setTimeout(() => {
+          addTerminalLog(ARCHETYPES[currentArchetype].title, `Command received: "${clean}". Awaiting tactical vector execution.`);
+        }, 250);
+      }
+    }
+
+    function executeChip(text) {
+      const input = document.getElementById('commandInput');
+      input.value = text;
+      executeCommand(text);
+      input.value = '';
+    }
+
+    const commandInput = document.getElementById('commandInput');
+    commandInput.addEventListener('keydown', (e) => {
+      keystrokeEnergy = Math.min(1.0, keystrokeEnergy + 0.15);
+      if (e.key === 'Enter') {
+        executeCommand(commandInput.value);
+        commandInput.value = '';
+      }
+    });
+
+    // Keyboard Hotkeys: 1: Jarvis, 2: Friday, 3: Ultron, M: Mute, F: Fullscreen
+    window.addEventListener('keydown', (e) => {
+      if (e.target.tagName === 'INPUT') return;
+      if (e.key === '1') switchPersonality('jarvis');
+      else if (e.key === '2') switchPersonality('friday');
+      else if (e.key === '3') switchPersonality('ultron');
+      else if (e.key === 'm' || e.key === 'M') toggleAudioMute();
+      else if (e.key === 'f' || e.key === 'F') toggleFullscreen();
+    });
+
+    function toggleFullscreen() {
+      if (!document.fullscreenElement) {
+        document.documentElement.requestFullscreen().catch(() => {});
+      } else {
+        if (document.exitFullscreen) document.exitFullscreen();
+      }
+    }
+
+    /* =========================================================================
+       7. CLEAN EXTERNAL HOOKS & EVENT DISPATCHER FOR BACKEND INTEGRATION
+       ========================================================================= */
+    window.switchPersonality = switchPersonality;
+    window.sendTerminalCommand = executeCommand;
+    window.setAudioActivity = function(level) {
+      simulatedAudioLevel = Math.min(1.0, Math.max(0.0, level));
+    };
+    window.updateTelemetry = function(key, value) {
+      const el = document.getElementById(key);
+      if (el) el.textContent = value;
+    };
+    window.addLogMessage = addTerminalLog;
+
+    // Optional SSE / WebSocket local listener for Mark-42 Python backend
+    function initBackendSync() {
+      try {
+        const eventSource = new EventSource('/events');
+        eventSource.onmessage = function(e) {
+          const data = JSON.parse(e.data);
+          if (data.type === 'transcript') {
+            addTerminalLog(data.speaker || 'AGENT', data.text);
+          } else if (data.type === 'audio_level') {
+            window.setAudioActivity(data.level);
+          } else if (data.type === 'switch_personality') {
+            switchPersonality(data.archetype);
+          }
+        };
+      } catch (err) {
+        // Standalone offline mode
+      }
+    }
+
+    // Startup Initialization
+    window.addEventListener('DOMContentLoaded', () => {
+      resizeCanvas();
+      initAudioWaveBins();
+      renderHUDCore(0);
+      renderSubCanvases(0);
+      updateAudioBins();
+      initBackendSync();
+    });
+  </script>
+</body>
+</html>

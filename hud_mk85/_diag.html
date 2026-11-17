@@ -1,0 +1,601 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>MK-LXXXV // FLIGHT HUD</title>
+
+<!-- Type: technical sans + monospace metrics. Falls back to system fonts offline. -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Roboto+Condensed:wght@300;400;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+
+<link rel="stylesheet" href="styles.css">
+</head>
+
+<body>
+<div class="stage" id="stage">
+
+  <!-- ===================== BACKGROUND LAYERS ===================== -->
+  <div class="bg-grid" aria-hidden="true"></div>
+  <div class="bg-glow" aria-hidden="true"></div>
+  <div class="sweep" aria-hidden="true"></div>
+  <div class="scanlines" aria-hidden="true"></div>
+  <div class="vignette" aria-hidden="true"></div>
+
+  <!-- Screen corner brackets -->
+  <div class="frame" aria-hidden="true">
+    <i class="frame__c frame__c--tl"></i>
+    <i class="frame__c frame__c--tr"></i>
+    <i class="frame__c frame__c--bl"></i>
+    <i class="frame__c frame__c--br"></i>
+  </div>
+
+  <!-- ===================== BOOT OVERLAY ===================== -->
+  <div class="boot" id="boot" aria-hidden="true">
+    <div class="boot__mark">J.A.R.V.I.S</div>
+    <div class="boot__sub" id="bootLine">INITIALISING MK&middot;LXXXV</div>
+    <div class="boot__bar"><i id="bootBar"></i></div>
+    <div class="boot__meta"><span>ARC REACTOR</span><span id="bootPct">0%</span></div>
+  </div>
+
+  <!-- ===================== TOP STATUS STRIP ===================== -->
+  <header class="topstrip">
+    <div class="topstrip__side">
+      <i class="led" id="ledLink"></i>
+      <b>MK&nbsp;LXXXV</b>
+      <span class="topstrip__sep">/</span>
+      <span id="modeText">LINKING</span>
+    </div>
+    <div class="topstrip__mid">
+      <span class="topstrip__name" id="brand">J.A.R.V.I.S</span>
+      <span class="topstrip__ver">v8.5.0</span>
+    </div>
+    <div class="topstrip__side topstrip__side--r">
+      <span id="stripGpu">GRAPHICS</span>
+      <i class="led led--red" id="ledMode"></i>
+    </div>
+  </header>
+
+  <!-- vertical feed from the top rail into the clock -->
+  <div class="trunk" aria-hidden="true"><i></i><i></i><i></i></div>
+
+  <!-- leader lines from the hub to each panel (drawn in JS) -->
+  <svg class="callouts" id="callouts" aria-hidden="true"></svg>
+
+  <!-- ===================== CENTRAL HUB ===================== -->
+  <div class="hub" id="hub">
+    <svg class="hub__svg" viewBox="0 0 1000 1000" aria-hidden="true">
+
+      <defs>
+        <!-- Ambient reactor bloom -->
+        <radialGradient id="gCore" cx="50%" cy="50%" r="50%">
+          <stop offset="0%"   stop-color="#e60000" stop-opacity=".45"/>
+          <stop offset="55%"  stop-color="#e60000" stop-opacity=".10"/>
+          <stop offset="100%" stop-color="#e60000" stop-opacity="0"/>
+        </radialGradient>
+
+        <!-- Radial bar fills: bright at the rim, sinking to black inboard -->
+        <linearGradient id="gRed" x1="0" y1="1" x2="0" y2="0">
+          <stop offset="0"   stop-color="#4d0000"/>
+          <stop offset=".55" stop-color="#e60000"/>
+          <stop offset="1"   stop-color="#ff4a4a"/>
+        </linearGradient>
+        <linearGradient id="gWhite" x1="0" y1="1" x2="0" y2="0">
+          <stop offset="0"   stop-color="#6b6b6b"/>
+          <stop offset="1"   stop-color="#ffffff"/>
+        </linearGradient>
+
+        <!-- the pale-hot arc used by the segment gauges -->
+        <linearGradient id="gGaugeArc" x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0"   stop-color="#ff4a4a"/>
+          <stop offset=".6"  stop-color="#ffffff"/>
+          <stop offset="1"   stop-color="#ff8c00"/>
+        </linearGradient>
+
+        <!-- hex mesh (Mark-series armour cue), very low contrast -->
+        <pattern id="hexMesh" width="44" height="76" patternUnits="userSpaceOnUse"
+                 patternTransform="translate(500 500)">
+          <path d="M22 0 L44 13 L44 38 L22 51 L0 38 L0 13 Z"
+                fill="none" stroke="#ffffff" stroke-opacity=".055" stroke-width="1"/>
+          <path d="M22 76 L44 63 L44 38 L22 51 L0 38 L0 63 Z"
+                fill="none" stroke="#ffffff" stroke-opacity=".055" stroke-width="1"/>
+        </pattern>
+
+        <!-- intensity of the reactor glow is animated from CPU load -->
+        <radialGradient id="gPulse" cx="50%" cy="50%" r="50%">
+          <stop offset="0%"   stop-color="#ff5a3c" stop-opacity=".95"/>
+          <stop offset="45%"  stop-color="#e60000" stop-opacity=".55"/>
+          <stop offset="100%" stop-color="#e60000" stop-opacity="0"/>
+        </radialGradient>
+
+        <!-- Reusable glows -->
+        <filter id="fRed" x="-60%" y="-60%" width="220%" height="220%">
+          <feGaussianBlur stdDeviation="6" result="b"/>
+          <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+        </filter>
+        <filter id="fWhite" x="-60%" y="-60%" width="220%" height="220%">
+          <feGaussianBlur stdDeviation="4" result="b"/>
+          <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+        </filter>
+      </defs>
+
+      <!-- Reactor bloom -->
+      <circle cx="500" cy="500" r="340" fill="url(#gCore)"/>
+
+      <!-- Faint hex mesh inside the ring field -->
+      <circle cx="500" cy="500" r="300" fill="url(#hexMesh)" class="hub__mesh"/>
+
+      <!-- Steel reference grid (inactive lines) -->
+      <g class="hub__grid">
+        <circle cx="500" cy="500" r="494"/>
+        <circle cx="500" cy="500" r="448"/>
+        <circle cx="500" cy="500" r="342"/>
+        <line x1="500" y1="6"   x2="500" y2="58"/>
+        <line x1="500" y1="942" x2="500" y2="994"/>
+        <line x1="6"   y1="500" x2="58"  y2="500"/>
+        <line x1="942" y1="500" x2="994" y2="500"/>
+      </g>
+
+      <!-- Dense tick rings, injected by app.js -->
+      <g id="ticksOuter" class="ticks"></g>
+      <g id="ticksInner" class="ticks ticks--rot"></g>
+
+      <!-- Mid ring stack: each group spins at its own rate -->
+      <g class="rot rot--cw-fast">
+        <circle class="ring ring--hair" cx="500" cy="500" r="452"/>
+        <circle class="ring ring--red-dash" cx="500" cy="500" r="436"
+                stroke-dasharray="196 44 74 44"/>
+      </g>
+
+      <g class="rot rot--ccw-slow">
+        <circle class="ring ring--white-dash" cx="500" cy="500" r="412"
+                stroke-dasharray="3 11"/>
+      </g>
+
+      <g class="rot rot--cw-slow">
+        <circle class="ring ring--white-arc" cx="500" cy="500" r="378"
+                stroke-dasharray="152 460"/>
+        <circle class="ring ring--red-arc" cx="500" cy="500" r="378"
+                stroke-dasharray="18 594" stroke-dashoffset="-152"/>
+      </g>
+
+      <g class="rot rot--ccw-fast">
+        <circle class="ring ring--red-dash" cx="500" cy="500" r="340"
+                stroke-dasharray="52 214 6 214"/>
+      </g>
+
+      <!-- Static separators -->
+      <circle class="ring ring--hair" cx="500" cy="500" r="306"/>
+      <g class="hub__notches">
+        <line x1="500" y1="194" x2="500" y2="216"/>
+        <line x1="806" y1="500" x2="784" y2="500"/>
+        <line x1="500" y1="806" x2="500" y2="784"/>
+        <line x1="194" y1="500" x2="216" y2="500"/>
+      </g>
+
+      <!-- Curved radial bar chart, right side. Height = selected metric. -->
+      <g id="hubBars" class="hub__bars"></g>
+
+      <!-- Three-segment inner core -->
+      <g class="core">
+        <path class="core__wedge" data-metric="cpu"
+              d="M275.2 354.0 A268 268 0 0 1 724.8 354.0 L593.9 439.0 A112 112 0 0 0 406.1 439.0 Z"/>
+        <path class="core__wedge" data-metric="gpu"
+              d="M738.8 378.3 A268 268 0 0 1 514.0 767.6 L505.9 611.8 A112 112 0 0 0 599.8 449.2 Z"/>
+        <path class="core__wedge" data-metric="mem"
+              d="M486.0 767.6 A268 268 0 0 1 261.2 378.3 L400.2 449.2 A112 112 0 0 0 494.1 611.8 Z"/>
+
+        <!-- Segment separators -->
+        <g class="core__seps">
+          <line x1="500" y1="232" x2="500" y2="388"/>
+          <line x1="732.0" y1="636.0" x2="594.0" y2="556.0"/>
+          <line x1="268.0" y1="636.0" x2="406.0" y2="556.0"/>
+        </g>
+
+        <!-- Live segment gauges, injected by app.js (r=250) -->
+        <g id="coreArcs" class="core__arcs"></g>
+
+        <!-- Centre void / reactor -->
+        <circle class="core__void" cx="500" cy="500" r="110"/>
+        <circle class="core__ring" cx="500" cy="500" r="112"/>
+
+        <!-- Arc reactor: segmented iris + triangular core -->
+        <g class="reactor">
+          <circle class="reactor__pulse" id="reactorPulse" cx="500" cy="500" r="104" fill="url(#gPulse)"/>
+          <g id="reactorIris" class="reactor__iris"></g>
+          <g class="rot rot--cw-slow reactor__spin">
+            <path class="reactor__tri" d="M500 458 L536 520 L464 520 Z"/>
+          </g>
+          <circle class="reactor__halo" cx="500" cy="500" r="46"/>
+          <circle class="reactor__dot" cx="500" cy="500" r="7"/>
+        </g>
+        <circle class="core__dot" cx="500" cy="500" r="3.2"/>
+        <text class="core__mk" x="500" y="548">MK&middot;85</text>
+      </g>
+
+      <!-- Segment labels + live readouts -->
+      <g class="core__labels">
+        <text x="500.0" y="316.0">SUIT</text>
+        <text x="661.1" y="595.0">FLIGHT</text>
+        <text x="338.9" y="595.0">WEAPON</text>
+      </g>
+      <g class="core__vals">
+        <text class="core__val" id="valCPU" x="500.0" y="342.0" data-metric="cpu">--</text>
+        <text class="core__val" id="valGPU" x="661.1" y="617.0" data-metric="gpu">--</text>
+        <text class="core__val" id="valMEM" x="338.9" y="617.0" data-metric="mem">--</text>
+      </g>
+
+      <!-- 12 o'clock digital clock -->
+      <g class="hub__clock">
+        <rect class="hub__clockbox" x="414" y="10" width="172" height="96" rx="3"/>
+        <text class="hub__clockk" x="500" y="40">SYS TIME</text>
+        <!-- red ghost, offset by a pixel: the chromatic split movie HUDs have -->
+        <text class="hub__clockv hub__clockv--ghost" x="501.4" y="84">23:22</text>
+        <text class="hub__clockv" id="clock" x="500" y="84">23:22</text>
+        <line class="hub__clocktick" x1="404" y1="58" x2="414" y2="58"/>
+        <line class="hub__clocktick" x1="586" y1="58" x2="596" y2="58"/>
+      </g>
+
+      <!-- tiny instrument labels, injected by app.js -->
+      <g id="microLabels" class="micro"></g>
+    </svg>
+  </div>
+
+  <!-- ===================== LEFT: SYSTEM DIAGNOSTICS ===================== -->
+  <!-- Panel placement lives in styles.css: --x/--y (centre), --w/--h (1vmin
+       units) and --tilt (whole-panel rotation). -->
+  <section class="panel panel--diag">
+    <div class="panel__box">
+      <header class="panel__head">
+        <h2>System Diagnostics</h2>
+        <span class="panel__idx">01</span>
+      </header>
+
+      <div class="diag">
+        <!-- GPU TEMP curved vertical gauge -->
+        <div class="gauge">
+          <span class="gauge__name">GPU<br>TEMP</span>
+          <div class="gauge__body">
+            <svg viewBox="0 0 60 240" preserveAspectRatio="none">
+              <defs>
+                <linearGradient id="gGaugeL" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0"   stop-color="#ffb347"/>
+                  <stop offset=".55" stop-color="#ff8c00"/>
+                  <stop offset="1"   stop-color="#e60000"/>
+                </linearGradient>
+              </defs>
+              <path class="gauge__track" d="M46 12 C 8 62 8 178 46 228" pathLength="100"/>
+              <path class="gauge__fill"  id="gpuArc" d="M46 12 C 8 62 8 178 46 228" pathLength="100"
+                    stroke="url(#gGaugeL)"/>
+            </svg>
+          </div>
+          <span class="gauge__num" id="gpuVal">--<i>&deg;C</i></span>
+          <span class="gauge__src" id="gpuSrc"></span>
+        </div>
+
+        <!-- Wireframe armour bust -->
+        <div class="bust">
+          <svg viewBox="0 0 200 250" class="bust__svg">
+            <defs>
+              <linearGradient id="gVisor" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0" stop-color="#ff5a3c"/>
+                <stop offset="1" stop-color="#e60000"/>
+              </linearGradient>
+            </defs>
+
+            <rect class="bust__frame" x="8" y="6" width="184" height="238"/>
+            <g class="bust__cross">
+              <line x1="100" y1="2"   x2="100" y2="14"/>
+              <line x1="100" y1="236" x2="100" y2="248"/>
+              <line x1="4"   y1="125" x2="16"  y2="125"/>
+              <line x1="184" y1="125" x2="196" y2="125"/>
+            </g>
+
+            <g class="bust__line">
+              <!-- helmet shell -->
+              <path d="M100 16 C138 16 156 38 156 76 C156 112 148 140 134 162 C124 178 113 190 100 196
+                       C87 190 76 178 66 162 C52 140 44 112 44 76 C44 38 62 16 100 16 Z"/>
+              <!-- brow / crown ridges -->
+              <path d="M56 62 C78 50 122 50 144 62"/>
+              <path d="M56 88 C74 80 88 79 100 79 C112 79 126 80 144 88"/>
+              <!-- cheek plates -->
+              <path d="M62 104 L74 142"/>
+              <path d="M138 104 L126 142"/>
+              <!-- jaw -->
+              <path d="M76 166 C84 176 92 181 100 183 C108 181 116 176 124 166"/>
+              <!-- mouth vents -->
+              <path d="M84 138 H116"/>
+              <path d="M86 146 H114"/>
+              <path d="M88 154 H112"/>
+              <!-- neck -->
+              <path d="M86 196 V212"/>
+              <path d="M114 196 V212"/>
+              <path d="M86 212 H114"/>
+              <!-- shoulders -->
+              <path d="M97 214 C70 214 52 224 44 240"/>
+              <path d="M103 214 C130 214 148 224 156 240"/>
+            </g>
+
+            <!-- eye visor (lit) -->
+            <path class="bust__visor" d="M56 92 C74 84 88 83 100 83 C112 83 126 84 144 92
+                                        C132 101 118 105 100 105 C82 105 68 101 56 92 Z"
+                  fill="url(#gVisor)"/>
+            <!-- arc reactor -->
+            <circle class="bust__reactor" cx="100" cy="228" r="9"/>
+            <circle class="bust__reactor2" cx="100" cy="228" r="4"/>
+          </svg>
+        </div>
+
+        <!-- CORE TEMP curved vertical gauge -->
+        <div class="gauge">
+          <span class="gauge__name">CORE<br>TEMP</span>
+          <div class="gauge__body">
+            <svg viewBox="0 0 60 240" preserveAspectRatio="none">
+              <defs>
+                <linearGradient id="gGaugeR" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0"   stop-color="#ffb347"/>
+                  <stop offset=".55" stop-color="#ff8c00"/>
+                  <stop offset="1"   stop-color="#e60000"/>
+                </linearGradient>
+              </defs>
+              <path class="gauge__track" d="M14 12 C 52 62 52 178 14 228" pathLength="100"/>
+              <path class="gauge__fill"  id="coreArc" d="M14 12 C 52 62 52 178 14 228" pathLength="100"
+                    stroke="url(#gGaugeR)"/>
+            </svg>
+          </div>
+          <span class="gauge__num" id="coreVal">--<i>&deg;C</i></span>
+          <span class="gauge__src" id="coreSrc"></span>
+        </div>
+      </div>
+
+      <!-- Fan telemetry -->
+      <div class="diag__rows">
+        <div class="diag__row"><span>AUXILIARY FAN</span><b id="fanAux">---- <em>RPM</em></b></div>
+        <div class="diag__row"><span>CPU FAN</span><b id="fanCpu">---- <em>RPM</em></b></div>
+      </div>
+
+      <!-- Block graphs -->
+      <div class="diag__graphs">
+        <div class="graph">
+          <div class="graph__top"><span>DOWNLOAD</span><b id="downVal">0.0</b><em id="downUnit">kB/s</em></div>
+          <div class="graph__bars" id="gDown" aria-hidden="true"></div>
+        </div>
+        <div class="graph">
+          <div class="graph__top"><span>UPLOAD</span><b id="upVal">0.0</b><em id="upUnit">kB/s</em></div>
+          <div class="graph__bars" id="gUp" aria-hidden="true"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== BOTTOM LEFT: DISK STATUS ===================== -->
+  <section class="panel panel--disk">
+    <div class="panel__box">
+      <header class="panel__head">
+        <h2>Disk Status</h2>
+        <span class="panel__idx">02</span>
+      </header>
+
+      <div class="disk__row" id="volRow1">
+        <div class="disk__top">
+          <span id="volName1">VOLUME --</span>
+          <b id="volPct1">--%</b>
+        </div>
+        <div class="segbar" id="volBar1" data-pct="0" data-tone="amber" aria-label="Volume usage"></div>
+      </div>
+
+      <div class="disk__row" id="volRow2">
+        <div class="disk__top">
+          <span id="volName2">VOLUME --</span>
+          <b id="volPct2">--%</b>
+        </div>
+        <div class="segbar" id="volBar2" data-pct="0" data-tone="amber" aria-label="Volume usage"></div>
+      </div>
+
+      <!-- Targeting dial: the needle tracks the busiest volume -->
+      <div class="dial">
+        <svg viewBox="0 0 140 140" aria-hidden="true">
+          <circle class="dial__ring" cx="70" cy="70" r="66"/>
+          <g class="dial__spin" id="dialSpin">
+            <circle class="dial__dash" cx="70" cy="70" r="58"/>
+            <path class="dial__arrow" d="M70 6 L74 18 L66 18 Z"/>
+          </g>
+          <circle class="dial__ticks" cx="70" cy="70" r="50"/>
+          <path class="dial__wedge" d="M112.3 85.4 A45 45 0 0 1 85.4 112.3"/>
+          <circle class="dial__inner" cx="70" cy="70" r="34"/>
+          <line class="dial__cross" x1="70" y1="42" x2="70" y2="98"/>
+          <line class="dial__cross" x1="42" y1="70" x2="98" y2="70"/>
+          <circle class="dial__dot" cx="70" cy="70" r="3"/>
+        </svg>
+        <span class="dial__k">CAP</span>
+        <b class="dial__v" id="dialVal">--</b>
+      </div>
+
+      <!-- Floating angled tab -->
+      <div class="tagrow">
+        <span class="tag" id="tagFree">FREE</span>
+        <span class="tag tag--red" id="tagCount">00x</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== BOTTOM RIGHT: USB STORAGE ===================== -->
+  <section class="panel panel--usb">
+    <div class="panel__box">
+      <header class="panel__head">
+        <h2>USB Storage Info.</h2>
+        <span class="panel__idx">03</span>
+      </header>
+
+      <div class="usb">
+        <!-- Isometric drive -->
+        <div class="usb__art">
+          <svg viewBox="0 0 170 130" aria-hidden="true">
+            <defs>
+              <linearGradient id="gUsbTop" x1="0" y1="0" x2="1" y2="0">
+                <stop offset="0"   stop-color="#f2f2f2"/>
+                <stop offset=".55" stop-color="#b9bcc0"/>
+                <stop offset="1"   stop-color="#e8e8e8"/>
+              </linearGradient>
+              <linearGradient id="gUsbSide" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0" stop-color="#8a8e93"/>
+                <stop offset="1" stop-color="#41454a"/>
+              </linearGradient>
+            </defs>
+
+            <!-- underside slab (thickness) -->
+            <g transform="translate(10,52) skewY(-24)">
+              <rect x="0"  y="0" width="120" height="34" rx="5" fill="#1b1d20"/>
+              <rect x="96" y="5" width="42"  height="24" rx="2" fill="#2b2f33"/>
+            </g>
+            <!-- connector -->
+            <g transform="translate(10,40) skewY(-24)">
+              <rect x="96" y="5" width="42" height="24" rx="2" fill="#cfd2d6"/>
+              <rect x="106" y="11" width="24" height="12" rx="1" fill="#101214"/>
+              <rect x="96" y="5" width="42" height="24" rx="2" fill="none" stroke="#fff" stroke-opacity=".55"/>
+            </g>
+            <!-- body top -->
+            <g transform="translate(10,40) skewY(-24)">
+              <rect x="0" y="0" width="120" height="34" rx="5" fill="url(#gUsbTop)"/>
+              <rect x="0" y="0" width="120" height="34" rx="5" fill="none" stroke="#fff" stroke-opacity=".75"/>
+              <rect x="0" y="0" width="8"   height="34" rx="4" fill="url(#gUsbSide)"/>
+              <line x1="14" y1="8"  x2="86" y2="8"  stroke="#7d8186" stroke-opacity=".8"/>
+              <line x1="14" y1="26" x2="86" y2="26" stroke="#7d8186" stroke-opacity=".8"/>
+              <!-- status LED -->
+              <circle class="usb__led" cx="18" cy="17" r="3.6" fill="#ff2d2d"/>
+              <circle cx="18" cy="17" r="8" fill="#ff2d2d" opacity=".22"/>
+            </g>
+            <!-- contact pins -->
+            <g transform="translate(10,40) skewY(-24)" opacity=".85">
+              <rect x="104" y="9" width="2" height="16" fill="#4a4e52"/>
+              <rect x="110" y="9" width="2" height="16" fill="#4a4e52"/>
+              <rect x="116" y="9" width="2" height="16" fill="#4a4e52"/>
+              <rect x="122" y="9" width="2" height="16" fill="#4a4e52"/>
+            </g>
+          </svg>
+        </div>
+
+        <!-- Drives (bound to removable volumes) -->
+        <div class="usb__list" id="usbList">
+          <div class="usb__drive">
+            <span class="usb__tag">--</span>
+            <div class="segbar segbar--red" data-pct="0" data-tone="red" data-pulse="1" aria-label="Drive usage"></div>
+            <b class="usb__pct">--</b>
+          </div>
+          <div class="usb__drive">
+            <span class="usb__tag">--</span>
+            <div class="segbar segbar--red" data-pct="0" data-tone="red" data-pulse="1" aria-label="Drive usage"></div>
+            <b class="usb__pct">--</b>
+          </div>
+          <div class="usb__drive">
+            <span class="usb__tag">--</span>
+            <div class="segbar segbar--red" data-pct="0" data-tone="red" data-pulse="1" aria-label="Drive usage"></div>
+            <b class="usb__pct">--</b>
+          </div>
+        </div>
+      </div>
+
+      <div class="usb__foot">
+        <span><i class="led led--red" id="usbLed"></i> <span id="usbState">NO MEDIA</span></span>
+        <span id="usbCount">0 DEVICES</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== PROXIMITY / NETWORK ===================== -->
+  <section class="panel panel--aux">
+    <div class="panel__box">
+      <header class="panel__head">
+        <h2>Proximity</h2>
+        <span class="panel__idx">04</span>
+      </header>
+
+      <div class="aux">
+        <svg class="miniradar" viewBox="0 0 100 100" aria-hidden="true">
+          <defs>
+            <linearGradient id="gSweep" x1="0" y1="0" x2="1" y2="0">
+              <stop offset="0" stop-color="#e60000" stop-opacity=".5"/>
+              <stop offset="1" stop-color="#e60000" stop-opacity="0"/>
+            </linearGradient>
+          </defs>
+          <circle class="mr__ring" cx="50" cy="50" r="46"/>
+          <circle class="mr__ring" cx="50" cy="50" r="30"/>
+          <circle class="mr__ring" cx="50" cy="50" r="14"/>
+          <line class="mr__cross" x1="50" y1="4"  x2="50" y2="96"/>
+          <line class="mr__cross" x1="4"  y1="50" x2="96" y2="50"/>
+          <g id="radarBlips"></g>
+          <path class="mr__sweep" id="mrSweep" d="M50 50 L50 6 A44 44 0 0 1 82 17.5 Z"/>
+          <circle class="mr__dot"  cx="50" cy="50" r="1.8"/>
+        </svg>
+
+        <div class="aux__meta">
+          <div><span>CONTACTS</span><b id="auxConns">--</b></div>
+          <div><span>INBOUND</span><b id="auxRx">-- <em>kB/s</em></b></div>
+          <div><span>OUTBOUND</span><b id="auxTx">-- <em>kB/s</em></b></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== RIGHT TELEMETRY RAIL ===================== -->
+  <aside class="rail">
+    <div class="rail__head"><span>STATUS</span><b id="railMode">LIVE</b></div>
+
+    <div class="rail__row">
+      <span>CPU LOAD</span>
+      <i class="rail__bar"><b id="railCpu" style="width:0%"></b></i>
+      <em id="railCpuV">0</em>
+    </div>
+    <div class="rail__row">
+      <span>MEMORY</span>
+      <i class="rail__bar"><b id="railMem" style="width:0%"></b></i>
+      <em id="railMemV">0</em>
+    </div>
+    <div class="rail__row">
+      <span>GPU LOAD</span>
+      <i class="rail__bar"><b id="railGpu" style="width:0%"></b></i>
+      <em id="railGpuV">0</em>
+    </div>
+    <div class="rail__row">
+      <span>STORAGE</span>
+      <i class="rail__bar"><b id="railDisk" style="width:0%"></b></i>
+      <em id="railDiskV">0</em>
+    </div>
+    <div class="rail__row">
+      <span>NET I/O</span>
+      <i class="rail__bar"><b id="railNet" style="width:0%"></b></i>
+      <em id="railNetV">0</em>
+    </div>
+    <div class="rail__row">
+      <span>PROCESSES</span>
+      <i class="rail__bar"><b id="railProc" style="width:0%"></b></i>
+      <em id="railProcV">0</em>
+    </div>
+    <div class="rail__row" id="railBattRow">
+      <span>BATTERY</span>
+      <i class="rail__bar"><b id="railBatt" style="width:0%"></b></i>
+      <em id="railBattV">0</em>
+    </div>
+
+    <div class="rail__signal" id="railEq" aria-hidden="true">
+      <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+    </div>
+
+    <div class="rail__foot"><i class="led led--red" id="railLed"></i> <span id="railFoot">SYNCED</span></div>
+  </aside>
+
+  <!-- ===================== BOTTOM DECK ===================== -->
+  <div class="deck">
+    <div class="deck__item"><span>CORE CLOCK</span><b id="deckClock">-- <em>GHz</em></b></div>
+    <div class="deck__item"><span>GPU TEMP</span><b class="hot" id="deckTemp">-- <em>&deg;C</em></b></div>
+    <div class="deck__item"><span>UPTIME</span><b id="deckUp">--:--</b></div>
+    <div class="deck__item"><span>FREE RAM</span><b id="deckFree">-- <em>GB</em></b></div>
+  </div>
+
+</div>
+
+<script>window.__errors=[];window.addEventListener("error",e=>window.__errors.push(String(e.message)+" @"+(e.filename||"")+":"+e.lineno));window.addEventListener("unhandledrejection",e=>window.__errors.push("promise: "+e.reason));</script><script src="app.js"></script>
+<script src="_diag.js"></script></body>
+</html>
