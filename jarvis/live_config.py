@@ -29,6 +29,7 @@ def compose_prompt(
     describe_state,
     prompt_budget,
     now: datetime | None = None,
+    episodic_text: str = "",
 ) -> str:
     """The system instruction, in the same order the inline builder used."""
     sys_prompt = _read_personality(base_dir) + "\n\n" + load_system_prompt()
@@ -42,10 +43,15 @@ def compose_prompt(
         f"If user says 'in 2 minutes', add 2 minutes to this time.\n\n"
     )
 
+    prefix = time_ctx
     if memory_text:
-        sys_prompt = time_ctx + memory_text + "\n\n" + sys_prompt
-    else:
-        sys_prompt = time_ctx + sys_prompt
+        prefix += memory_text + "\n\n"
+    if episodic_text:
+        prefix += (
+            "[LONG-TERM MEMORY — what the user did, said, or asked you to "
+            "remember across sessions]\n" + episodic_text + "\n\n"
+        )
+    sys_prompt = prefix + sys_prompt
 
     # Snapshot of what is already open, so JARVIS continues in existing windows
     # instead of opening duplicates.
@@ -125,6 +131,7 @@ def build_config(
     load_system_prompt,
     describe_state,
     prompt_budget,
+    episodic_text: str = "",
     tool_declarations,
     vad_tuning: bool,
     vad_silence_ms: int,
@@ -145,6 +152,7 @@ def build_config(
         describe_state=describe_state,
         prompt_budget=prompt_budget,
         now=now,
+        episodic_text=episodic_text,
     )
     vad_kwargs = _vad_kwargs(
         types, enabled=vad_tuning, silence_ms=vad_silence_ms,

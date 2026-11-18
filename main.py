@@ -645,13 +645,14 @@ class JarvisLive(ToolRunnerMixin):
     
     def _build_config(self) -> types.LiveConnectConfig:
         """T1.6: prompt composition and config live in jarvis/live_config.py."""
-        from jarvis import live_config
+        from jarvis import live_config, memory_context
 
         memory = load_memory()
         return live_config.build_config(
             types=types,
             base_dir=BASE_DIR,
             memory_text=format_memory_for_prompt(memory),
+            episodic_text=memory_context.build_context(),
             load_system_prompt=_load_system_prompt,
             describe_state=_describe_state,
             prompt_budget=_apply_prompt_budget,
@@ -1195,6 +1196,20 @@ class JarvisLive(ToolRunnerMixin):
 
                             if full_out:
                                 self.ui.write_log(f"Jarvis: {full_out}")
+
+                            # Durable episodic memory: future sessions should
+                            # recall what was said, not just static user facts.
+                            if full_in and len(full_in) > 4:
+                                try:
+                                    from jarvis import memory_context as _mem_ctx
+
+                                    threading.Thread(
+                                        target=_mem_ctx.record_exchange,
+                                        args=(full_in, full_out),
+                                        daemon=True,
+                                    ).start()
+                                except Exception:
+                                    pass
 
                             if full_in and len(full_in) > 5:
                                 threading.Thread(
