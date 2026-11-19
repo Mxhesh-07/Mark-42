@@ -55,7 +55,7 @@ def _sql_context() -> str:
     except Exception:
         return ""
 
-    wanted = {"fact", "event", "exchange", "note", "task", "action"}
+    wanted = {"fact", "event", "exchange", "note", "task", "action", "intention"}
     kept = []
     for row in rows:
         kind = str(row.get("kind") or "fact")

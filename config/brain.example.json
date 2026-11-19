@@ -1,0 +1,21 @@
+{
+  "enabled": true,
+  "mode": "suggest",
+  "min_salience": 0.55,
+  "min_speak_salience": 0.62,
+  "reflect_interval_sec": 900,
+  "max_active_intentions": 6,
+  "max_tasks_per_hour": 2,
+  "never_auto_tools": [
+    "send_message",
+    "cmd_control",
+    "devices",
+    "dev_agent",
+    "generated_code",
+    "computer_settings",
+    "file_controller",
+    "desktop_control",
+    "screen_process",
+    "agent_task"
+  ]
+}

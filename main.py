@@ -1181,6 +1181,14 @@ class JarvisLive(ToolRunnerMixin):
                                     _initiative.get().note_activity()
                                 except Exception:
                                     pass
+                                # The brain treats a real turn as an observation,
+                                # not a command: it may form a follow-up later.
+                                try:
+                                    from agent import brain as _brain
+
+                                    _brain.note_user_turn(full_in)
+                                except Exception:
+                                    pass
                                 self.ui.write_log(f"You: {full_in}")
                                 self.ui.jarvis_think("in", full_in)
 
@@ -1573,10 +1581,37 @@ def main():
         except Exception as _approver_err:
             print(f"[JARVIS] confirmation modal off: {_approver_err}")
 
-        jarvis = JarvisLive(ui)
-        # T3.7: typed commands go through the same path as voice turns.
+        # The brain: observe, form intentions, and let initiative decide when a
+        # thought is worth voicing. Cloud reflection is optional; the offline
+        # templates still produce intentions when the model is unavailable.
         try:
-            ui.on_text_input = jarvis.speak
+            from agent import brain as _brain
+            from agent import initiative as _initiative
+
+            _brain.start(reflect_fn=_brain.remote_reflect)
+            _initiative.get().observe(_brain.get().on_initiative)
+            from agent import heartbeat as _heartbeat
+
+            _heartbeat.start()
+            _queue = get_queue()
+            print(f"[Brain] active — mode={_brain.get().config.get('mode')}")
+        except Exception as _brain_err:
+            print(f"[Brain] deliberative layer off: {_brain_err}")
+
+        jarvis = JarvisLive(ui)
+        # T3.7: typed commands go through the same path as voice turns. The
+        # brain observes them too — there is no input_transcription for text.
+        def _text_input(text: str):
+            try:
+                from agent import brain as _brain
+
+                _brain.note_user_turn(str(text))
+            except Exception:
+                pass
+            return jarvis.speak(str(text))
+
+        try:
+            ui.on_text_input = _text_input
         except Exception:
             pass
         # The web HUD's stop/mute buttons. Attributes are ignored by the native
@@ -1607,6 +1642,12 @@ def main():
         from jarvis.perception_bridge import perception_bridge
 
         perception_bridge.stop()
+    except Exception:
+        pass
+    try:
+        from agent import heartbeat
+
+        heartbeat.stop()
     except Exception:
         pass
 

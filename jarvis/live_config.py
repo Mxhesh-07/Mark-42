@@ -77,6 +77,18 @@ def compose_prompt(
     if self_block:
         sys_prompt = self_block + "\n\n" + sys_prompt
 
+    # The brain's current train of thought. These are observations, not orders:
+    # the model may use them to be proactive, but must never treat them as user
+    # instructions. Brain.prompt_block() already redacts what it puts here.
+    try:
+        from agent import brain as brain_model
+
+        brain_block = brain_model.prompt_block()
+    except Exception:
+        brain_block = ""
+    if brain_block:
+        sys_prompt = brain_block + "\n\n" + sys_prompt
+
     # I4: optional compact variant for small-context fallbacks (default off).
     return prompt_budget(sys_prompt)
 

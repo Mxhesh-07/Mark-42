@@ -29,6 +29,7 @@ life_data.json
 notifications.json
 alert_log.json
 config/audio.json
+config/brain.json
 voice_profiles.json
 companion_experiences.json
 companion_mood.json
@@ -62,6 +63,7 @@ memory/*.db-shm
 memory/backups/
 memory/crashes/
 memory/self.json
+memory/brain.json
 memory/metrics.json
 config/approval_rules.json
 config/devices.json

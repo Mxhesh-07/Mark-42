@@ -20,9 +20,9 @@ if str(ROOT) not in sys.path:
 def _isolate(tmp_path, monkeypatch):
     """Never touch real kill-switch, audit or approval state, and never leak
     rate-limit/breaker/role/metrics state between tests."""
-    from agent import (approval, approval_rules, audit, breaker, crash, degrade,
-                       devices, initiative, judgement, metrics, policy, quota,
-                       ratelimit, roles, trace)
+    from agent import (approval, approval_rules, audit, brain, breaker, crash,
+                       degrade, devices, initiative, judgement, metrics, policy,
+                       quota, ratelimit, roles, trace, task_store)
     from core import self as self_model
     from memory import sql_memory
 
@@ -35,6 +35,9 @@ def _isolate(tmp_path, monkeypatch):
     monkeypatch.setattr(crash, "CRASH_DIR", tmp_path / "crashes")
     monkeypatch.setattr(judgement, "CONFIG_PATH", tmp_path / "judgement.json")
     monkeypatch.setattr(initiative, "POLICY_PATH", tmp_path / "autonomy.json")
+    monkeypatch.setattr(brain, "CONFIG_PATH", tmp_path / "brain.json")
+    monkeypatch.setattr(brain, "STATE_PATH", tmp_path / "brain_state.json")
+    monkeypatch.setattr(task_store, "STORE_PATH", tmp_path / "agent_tasks.json")
     monkeypatch.setattr(self_model, "STATE_PATH", tmp_path / "self.json")
     monkeypatch.setattr(quota, "LEDGER_PATH", tmp_path / "runtime" / "quota_ledger.json")
     monkeypatch.setattr(sql_memory, "BASE_DIR", tmp_path)
@@ -52,6 +55,7 @@ def _isolate(tmp_path, monkeypatch):
     degrade.reset()
     judgement.reset_session()
     initiative.reset()
+    brain.reset()
     self_model.reset_for_tests()
     quota.reset_for_tests()
     yield
@@ -68,6 +72,7 @@ def _isolate(tmp_path, monkeypatch):
     degrade.reset()
     judgement.reset_session()
     initiative.reset()
+    brain.reset()
     self_model.reset_for_tests()
     quota.reset_for_tests()
 

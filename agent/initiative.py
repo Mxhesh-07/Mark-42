@@ -169,6 +169,7 @@ class Initiative:
         self._activity_last: float | None = None
         self._speaker: Callable[[str], None] | None = None
         self._notifier: Callable[[str, str], None] | None = None
+        self._observer: Callable[["Candidate"], None] | None = None
         self._lock = threading.RLock()
 
     # -- registration ----------------------------------------------------------
@@ -193,6 +194,15 @@ class Initiative:
                 self._speaker = speaker
             if notifier is not None:
                 self._notifier = notifier
+
+    def observe(self, fn: Callable[["Candidate"], None] | None) -> None:
+        """Learn from every dispatched candidate (the brain subscribes here).
+
+        The observer never changes dispatch: it runs after the audit entry, and
+        a broken observer cannot stop a notification.
+        """
+        with self._lock:
+            self._observer = fn
 
     # -- context ---------------------------------------------------------------
 
@@ -312,6 +322,13 @@ class Initiative:
 
         self._audit(candidate, action)
         self._metric("dispatch", action)
+        with self._lock:
+            observer = self._observer
+        if observer is not None:
+            try:
+                observer(candidate)
+            except Exception as e:
+                print(f"[Initiative] ⚠️ observer failed: {e}")
         return action
 
     def tick(self) -> list[tuple[str, str]]:
@@ -360,7 +377,7 @@ class Initiative:
             self._notifications.clear()
             self._focus = self._user_speaking = self._meeting = False
             self._activity_start = self._activity_last = None
-            self._speaker = self._notifier = None
+            self._speaker = self._notifier = self._observer = None
 
     # -- internals -------------------------------------------------------------
 
