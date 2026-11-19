@@ -196,6 +196,39 @@ def test_bridge_sends_commands_through_the_queue(hud):
     _post(base, "/api/command", {"kind": "mute", "on": True})
     assert bridge.commands.drain() == [{"kind": "mute", "on": True}]
 
+    _post(base, "/api/command", {"kind": "quit"})
+    assert bridge.commands.drain() == [{"kind": "quit"}]
+
+
+def test_bridge_knows_when_the_hud_closes(hud):
+    bridge, state, base = hud
+    assert bridge.hud_lost() is False       # no page has connected yet
+
+    _get(base, "/api/state")
+    assert bridge.hud_lost() is False
+
+    bridge._last_hud_seen -= 10.0
+    assert bridge.hud_lost() is True
+
+    _get(base, "/api/state")                 # a reload reconnects in time
+    assert bridge.hud_lost() is False
+
+
+def test_web_quit_stops_the_runtime_once(hud):
+    from ui.web_ui import WebUI
+
+    calls = []
+    ui = object.__new__(WebUI)               # no Tk init / browser
+    ui._quitting = False
+    ui.on_quit = lambda: calls.append("callback")
+    ui.close_hud = lambda: calls.append("close")
+    ui.root = mock.Mock()
+    ui.root.quit.side_effect = lambda: calls.append("root.quit")
+
+    ui.quit_from_hud()
+    ui.quit_from_hud()
+    assert calls == ["callback", "close", "root.quit"]
+
 
 def test_confirm_commands_carry_a_decision(hud):
     bridge, state, base = hud

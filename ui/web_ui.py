@@ -71,7 +71,9 @@ class WebUI(JarvisUI):
         # buttons degrade to no-ops instead of raising.
         self.on_interrupt = None      # () -> None
         self.on_mute = None           # (bool) -> None
+        self.on_quit = None           # () -> None
         self.muted = False
+        self._quitting = False
 
         self._start_bridge()
         if open_window and not os.environ.get("JARVIS_NO_HUD_WINDOW") \
@@ -229,6 +231,17 @@ class WebUI(JarvisUI):
             self._expire_confirms()
         except Exception:
             pass
+        if self._quitting:
+            return
+        # A closed/crashed HUD stops polling. Quit from here, never from the
+        # HTTP thread, so audio and state are still touched on the Tk thread.
+        if bridge is not None:
+            try:
+                if bridge.hud_lost():
+                    self.quit_from_hud()
+                    return
+            except Exception:
+                pass
         try:
             self.root.after(120, self._pump_commands)
         except Exception:
@@ -259,6 +272,8 @@ class WebUI(JarvisUI):
             self._publish(muted=on, mic=0.0 if on else self.mic_level)
         elif kind == "confirm":
             self._resolve_confirm(cmd.get("id"), str(cmd.get("decision") or "deny"))
+        elif kind == "quit":
+            self.quit_from_hud()
 
     # -- display methods overridden ---------------------------------------- #
     def update_mic_level(self, level):
@@ -376,6 +391,30 @@ class WebUI(JarvisUI):
         self._publish(connected=bool(on))
 
     # -- lifecycle --------------------------------------------------------- #
+    def quit_from_hud(self) -> None:
+        """Shut the runtime down when the page is closed or Quit is pressed.
+
+        The HTTP thread never calls this: it runs on the Tk command pump, the
+        same place that handles stop/mute. ``root.quit()`` lets main() finish
+        its cleanup (perception, heartbeat, queue) instead of the hard
+        ``os._exit`` used by the native window close.
+        """
+        if self._quitting:
+            return
+        self._quitting = True
+        print("[HUD] closed — shutting J.A.R.V.I.S. down", flush=True)
+        cb = getattr(self, "on_quit", None)
+        if callable(cb):
+            try:
+                cb()
+            except Exception as e:
+                print(f"[HUD] quit callback failed: {e}")
+        self.close_hud()
+        try:
+            self.root.quit()
+        except Exception:
+            pass
+
     def close_hud(self) -> None:
         self._deny_pending_confirms()
         try:

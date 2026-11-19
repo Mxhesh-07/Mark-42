@@ -2,14 +2,14 @@
 
 The browser is a view, not the brain. Python keeps owning the microphone, the
 Gemini Live session and the tools; this module gives the page a same-origin way
-to watch that state and to send the three things a HUD is allowed to send:
-typed text, stop, and mute.
+to watch that state and to send the things a HUD is allowed to send:
+typed text, stop, mute, and quit.
 
     GET  /                 the HUD (ui/web/static/)
     GET  /api/state        the state board + telemetry as JSON
     GET  /api/telemetry    just the machine readings
     GET  /health           liveness for scripts
-    POST /api/command      {"kind": "text"|"stop"|"mute"|"ping", ...}
+    POST /api/command      {"kind": "text"|"stop"|"mute"|"ping"|"quit", ...}
 
 Design notes
     * Binds 127.0.0.1 only, and rejects requests whose Host header is not the
@@ -22,6 +22,9 @@ Design notes
       drains them so the assistant is only ever mutated from one place.
     * Telemetry is sampled on its own thread and cached, so a slow sensor can
       never stall a page request.
+    * The page polls /api/state. When those polls stop after the HUD has been
+      seen, the browser was closed (or crashed), so the UI thread shuts the
+      runtime down. A reload is shorter than HUD_MISSING_S and is safe.
 """
 
 from __future__ import annotations
@@ -60,6 +63,11 @@ _MIME = {
 }
 
 _MAX_BODY = 8 * 1024
+
+# The HUD polls every 50 ms (600 ms in a hidden tab). A gap this long means the
+# tab is gone, not merely throttled. Set JARVIS_HUD_QUIT_ON_CLOSE=0 to keep the
+# old "HUD is only a view" behaviour.
+HUD_MISSING_S = 5.0
 
 
 # --------------------------------------------------------------------------- #
@@ -163,7 +171,7 @@ class Telemetry:
 class Commands:
     """A bounded queue of page requests, drained on the UI thread."""
 
-    KINDS = {"text", "stop", "mute", "ping", "confirm"}
+    KINDS = {"text", "stop", "mute", "ping", "confirm", "quit"}
     DECISIONS = {"approve", "deny", "always"}
 
     def __init__(self):
@@ -263,6 +271,7 @@ class _Handler(BaseHTTPRequestHandler):
             self._json({"ok": True, "rev": self.bridge.state.rev})
             return
         if path == "/api/state":
+            self.bridge.note_hud()
             board = self.bridge.state.snapshot()
             board["telemetry"] = self.bridge.telemetry.snapshot()
             board["ok"] = True
@@ -375,10 +384,30 @@ class Bridge:
         self.httpd: _Server | None = None
         self.origins: set[str] = set()
         self._thread: threading.Thread | None = None
+        self._presence_lock = threading.Lock()
+        self._hud_seen = False
+        self._last_hud_seen = 0.0
+        flag = os.environ.get("JARVIS_HUD_QUIT_ON_CLOSE", "1").strip().lower()
+        self.quit_on_close = flag not in ("0", "false", "no", "off")
 
     @property
     def url(self) -> str:
         return f"http://{self.host}:{self.port}/"
+
+    def note_hud(self) -> None:
+        """Called on each /api/state poll: the HUD is alive and watching."""
+        with self._presence_lock:
+            self._hud_seen = True
+            self._last_hud_seen = time.monotonic()
+
+    def hud_lost(self) -> bool:
+        """True when a HUD that was open has stopped polling."""
+        if not self.quit_on_close:
+            return False
+        with self._presence_lock:
+            if not self._hud_seen:
+                return False
+            return (time.monotonic() - self._last_hud_seen) > HUD_MISSING_S
 
     def start(self) -> "Bridge":
         """Bind the first free port. Raises OSError if every candidate is taken."""

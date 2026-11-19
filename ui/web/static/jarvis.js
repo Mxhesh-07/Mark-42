@@ -2,8 +2,9 @@
 //
 // The Python process is the brain: it owns the microphone, the Gemini Live
 // session and the tools. This page only watches. It polls /api/state twenty
-// times a second, paints what changed, and sends back the three things a HUD
-// is allowed to send: typed text, stop, mute.
+// times a second, paints what changed, and sends back the things a HUD is
+// allowed to send: typed text, stop, mute, quit. The polls are also a presence
+// signal — when they stop, Python knows the HUD was closed.
 //
 // The globe is the ULTRON orb (orb.js) driven by the same kind of data app.js
 // feeds it. Browser audio is not in the loop, so the waveform is synthesised
@@ -38,6 +39,7 @@ const state = {
   confirmAnswered: null,   // id answered, waiting for Python to clear it
   confirmLeft: 0,          // seconds, recomputed from the panel's deadline
   confirmPaintedAt: 0,
+  quitting: false,
 };
 
 // --------------------------------------------------------------------------
@@ -178,6 +180,7 @@ async function poll() {
     }
     render(board);
   } catch (err) {
+    if (state.quitting) return;
     state.fails += 1;
     if (state.fails === 4) {
       state.connected = false;
@@ -185,7 +188,9 @@ async function poll() {
       toast('HUD link lost — is J.A.R.V.I.S. running?', 4000);
     }
   } finally {
-    setTimeout(poll, document.hidden ? POLL_HIDDEN_MS : POLL_MS);
+    if (!state.quitting) {
+      setTimeout(poll, document.hidden ? POLL_HIDDEN_MS : POLL_MS);
+    }
   }
 }
 
@@ -569,6 +574,15 @@ $('#stop').addEventListener('click', () => {
   command({ kind: 'stop' });
 });
 
+$('#quit').addEventListener('click', () => {
+  unlock();
+  if (state.quitting) return;
+  state.quitting = true;                 // stop polling; the bridge is going away
+  sfx('off');
+  toast('Shutting J.A.R.V.I.S. down…', 2500);
+  command({ kind: 'quit' });
+});
+
 $('#mic').addEventListener('click', () => {
   unlock();
   state.muted = !state.muted;
@@ -601,6 +615,8 @@ window.addEventListener('keydown', (e) => {
     if (typing) document.activeElement.blur();
   } else if ((e.key === 'm' || e.key === 'M') && !typing) {
     $('#mic').click();
+  } else if ((e.key === 'q' || e.key === 'Q') && !typing) {
+    $('#quit').click();
   } else if (e.key === '/' && !typing) {
     e.preventDefault();
     $('#input').focus();

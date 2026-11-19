@@ -93,6 +93,12 @@
 }
 .stop:active { transform: translateY(1px); }
 body.speaking .stop { color: var(--text); border-color: var(--line-strong); }
+.stop.quit { color: rgba(255, 138, 138, 0.62); }
+.stop.quit:hover {
+  color: #ffe0e0;
+  border-color: rgba(255, 138, 138, 0.55);
+  background: rgba(255, 80, 80, 0.14);
+}
 
 /* An approval outranks every other state: the machine is waiting on a human. */
 body.awaiting #status .dot {

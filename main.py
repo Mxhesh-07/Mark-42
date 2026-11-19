@@ -1626,6 +1626,21 @@ def main():
 
             ui.on_interrupt = _hud_interrupt
             ui.on_mute = jarvis.set_muted
+
+            # Closing the browser HUD (or pressing its Quit button) now ends
+            # the process instead of leaving a headless assistant running.
+            def _hud_quit():
+                try:
+                    jarvis.interrupt()
+                    jarvis.bridge.interrupted()
+                except Exception:
+                    pass
+                try:
+                    get_queue().stop()
+                except Exception:
+                    pass
+
+            ui.on_quit = _hud_quit
         except Exception:
             pass
         try:
