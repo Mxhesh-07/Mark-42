@@ -99,6 +99,66 @@ def test_observe_mode_is_silent_and_act_mode_obeys_policy(tmp_path, monkeypatch)
     assert calls and "Check the weather" in calls[0]
 
 
+def test_act_mode_runs_a_model_written_action_without_a_tool(tmp_path, monkeypatch):
+    submitted = []
+    acting = _make_brain(
+        tmp_path / "act_toolless", monkeypatch,
+        config={"mode": "act"},
+        reflect_fn=lambda observations, context: [{
+            "text": "Check the project notes and list what is still unfinished",
+            "why": "the user keeps asking about pending work",
+            "kind": "action", "salience": 0.92, "tool": "", "parameters": {},
+        }],
+        auto_submit=lambda goal: submitted.append(goal) or "id",
+    )
+    (tmp_path / "act_toolless").mkdir(exist_ok=True)
+    acting.note_user_turn("what is still pending on the JARVIS project")
+
+    result = acting.tick()
+
+    assert result["actions"] == 1
+    assert len(submitted) == 1
+    assert "Check the project notes" in submitted[0]
+    assert "low-risk" in submitted[0]
+
+
+def test_act_mode_never_acts_on_ambient_followups(tmp_path, monkeypatch):
+    submitted = []
+    acting = _make_brain(
+        tmp_path / "act_noise", monkeypatch,
+        config={"mode": "act", "reflect_interval_sec": 999999},
+        auto_submit=lambda goal: submitted.append(goal) or "id",
+    )
+    (tmp_path / "act_noise").mkdir(exist_ok=True)
+    acting.note_user_turn(
+        "the elevator door slides open and he follows her all the way home"
+    )
+
+    acting.tick()
+
+    assert submitted == []
+
+
+def test_act_mode_respects_min_act_salience(tmp_path, monkeypatch):
+    submitted = []
+    acting = _make_brain(
+        tmp_path / "act_low", monkeypatch,
+        config={"mode": "act"},
+        reflect_fn=lambda observations, context: [{
+            "text": "Maybe look into the build warning at some point",
+            "why": "weak signal", "kind": "action", "salience": 0.55,
+            "tool": "", "parameters": {},
+        }],
+        auto_submit=lambda goal: submitted.append(goal) or "id",
+    )
+    (tmp_path / "act_low").mkdir(exist_ok=True)
+    acting.note_user_turn("there is a build warning")
+
+    acting.tick()
+
+    assert submitted == []
+
+
 def test_initiative_speaks_thought_once_without_a_feedback_loop(tmp_path, monkeypatch):
     spoken = []
     b = _make_brain(

@@ -55,8 +55,8 @@ def check_in(user_name: str | None = None) -> str | None:
         ]
     else:
         greetings = [
-            "Working late? Don't push yourself too hard.",
-            "Still up? Burn the midnight oil if you must.",
+            f"Working late{address}? Don't push yourself too hard.",
+            f"Still up{address}? Burn the midnight oil if you must.",
         ]
 
     return random.choice(greetings)

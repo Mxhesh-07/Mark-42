@@ -17,8 +17,11 @@ missing is a loop that joins them into something like a train of thought:
   handed to ``initiative`` as an ordinary candidate, so quiet hours, focus
   mode, user-speaking suppression and the hourly speak budget all still apply.
 * ``mode`` is a real limit: ``observe`` only feeds the prompt, ``suggest`` may
-  speak (the default), ``act`` may also submit background tasks — and only for
-  tools the policy already rates ``allow``, never for a deny-listed tool.
+  speak (the default), ``act`` may also submit background tasks. An intention
+  with an explicit tool must be policy-``allow`` and low-risk; a tool-less
+  *action* intention is planned by the executor under the same gates at call
+  time. Template "Follow up on: ..." noise from ambient speech is never acted
+  on.
 * Reflection through a cloud model is optional and injected. The deterministic
   path works offline, and a failed model call simply produces no new intention.
 * Every observation placed in the prompt is redacted. Observations are data,
@@ -50,6 +53,7 @@ DEFAULT_CONFIG = {
     "mode": "suggest",
     "min_salience": 0.55,
     "min_speak_salience": 0.62,
+    "min_act_salience": 0.80,
     "reflect_interval_sec": 900,
     "max_active_intentions": 6,
     "max_tasks_per_hour": 2,
@@ -554,27 +558,50 @@ class Brain:
                 self._save()
 
     def _submit_task(self, intention: Intention) -> bool:
-        """Act mode: only policy-allowed, low-risk, non-deny-listed tools."""
+        """Act mode: submit a task that stays inside the machine's policy.
+
+        Two shapes are allowed:
+
+        * an intention with an explicit tool — checked up front against the
+          deny-list, policy level and risk score, as before;
+        * a model-written ``action`` intention with no tool — handed to the
+          executor as a goal. The executor still checks every tool call against
+          policy/confirmation, but the goal carries an extra "low-risk only"
+          instruction so it cannot wander into machine changes.
+
+        Everything else (template follow-ups from ambient speech, insights,
+        low-salience guesses) is thought, not action.
+        """
         config = self.config
         tool, params = intention.tool, intention.parameters
-        if not tool:
-            return False
-        if tool in set(config.get("never_auto_tools") or []):
-            return False
-        try:
-            from agent import policy
-
-            if policy.evaluate(tool, params).level.name != "ALLOW":
+        if tool:
+            if tool in set(config.get("never_auto_tools") or []):
                 return False
-        except Exception:
-            return False
-        try:
-            from agent import judgement
+            try:
+                from agent import policy
 
-            if judgement.assess(tool, params).risk >= 0.5:
+                if policy.evaluate(tool, params).level.name != "ALLOW":
+                    return False
+            except Exception:
                 return False
-        except Exception:
-            return False
+            try:
+                from agent import judgement
+
+                if judgement.assess(tool, params).risk >= 0.5:
+                    return False
+            except Exception:
+                return False
+        else:
+            if intention.kind != "action":
+                return False
+            if intention.salience < float(
+                    config.get("min_act_salience", DEFAULT_CONFIG["min_act_salience"])):
+                return False
+            text = (intention.text or "").strip()
+            # The offline template turns every user turn into "Follow up on:
+            # ...", including TV audio the mic overhears. Never act on that.
+            if len(text) < 12 or text.lower().startswith("follow up on:"):
+                return False
 
         cutoff = self._clock() - 3600.0
         recent = sum(1 for i in self._all_intentions() if i.last_acted_at >= cutoff)
@@ -588,7 +615,14 @@ class Brain:
                 submit = get_queue().submit
             except Exception:
                 return False
-        goal = submit(f"Autonomous follow-up: {intention.text}") if submit else ""
+        goal_text = f"Autonomous follow-up: {intention.text}"
+        if not tool:
+            goal_text += (
+                " Keep this low-risk: use only read-only or allow-level tools. "
+                "Do not send messages, run commands, change settings, or delete "
+                "files — leave anything like that for Mahesh to approve."
+            )
+        goal = submit(goal_text) if submit else ""
         if not goal:
             return False
         with self._lock:
@@ -638,8 +672,12 @@ class Brain:
             noticing = self._state.get("noticing") or []
             if noticing:
                 lines.append(f"- Noticing: {_safe(noticing[0])}")
-            lines.append(f"- Mode: {config.get('mode')} — offer ideas first; "
-                         "ask before acting on the machine.")
+            if config.get("mode") == "act":
+                lines.append("- Mode: act — small low-risk follow-ups may be "
+                             "started on my own; bigger ones still ask first.")
+            else:
+                lines.append(f"- Mode: {config.get('mode')} — offer ideas first; "
+                             "ask before acting on the machine.")
             return "\n".join(lines[:MAX_LINES])
         except Exception:
             return ""

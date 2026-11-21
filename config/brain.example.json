@@ -3,6 +3,7 @@
   "mode": "suggest",
   "min_salience": 0.55,
   "min_speak_salience": 0.62,
+  "min_act_salience": 0.80,
   "reflect_interval_sec": 900,
   "max_active_intentions": 6,
   "max_tasks_per_hour": 2,
